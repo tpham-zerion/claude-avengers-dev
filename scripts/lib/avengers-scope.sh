@@ -137,12 +137,21 @@ avengers_scope_state() {
     _root_real="$(cd "$_root" 2>/dev/null && pwd -P)" || continue
     [ -n "$_root_real" ] || continue
     _resolved=1
+    # The filesystem root contains every resolved path. It is answered here
+    # rather than by the pattern below: stripping its slash would leave a quoted
+    # EMPTY prefix ("" followed by /*), which bash 3.2 matches and bash 5.2 does
+    # not. Bash's `pwd -P` keeps POSIX's leading `//`, so a root written as `//`
+    # resolves to `//`; it is the same root and is answered the same way. `pwd -P`
+    # never leaves a trailing slash on any other path, so below this check the
+    # quoted prefix is always non-empty.
+    case "$_root_real" in
+      /|//) printf 'yes\n'; return 0 ;;
+    esac
     # The trailing slash on the candidate lets the root itself match "$root"/*,
-    # while keeping a sibling such as <root>-other out. ${_root_real%/} keeps `/`
-    # as a root from becoming `//*`. The root is quoted so a glob character in
-    # the path stays literal.
+    # while keeping a sibling such as <root>-other out. The root is quoted so a
+    # glob character in the path stays literal.
     case "$_dir_real/" in
-      "${_root_real%/}"/*) printf 'yes\n'; return 0 ;;
+      "$_root_real"/*) printf 'yes\n'; return 0 ;;
     esac
   done <<EOF
 $_roots

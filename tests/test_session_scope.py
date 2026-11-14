@@ -230,6 +230,11 @@ class ScopeResolverTests(ScopeFixture):
         self.env_roots = "/"
         self.assertEqual(self.state(self.elsewhere), "yes")
 
+    def test_double_slash_root_is_the_filesystem_root(self) -> None:
+        # bash's `pwd -P` keeps POSIX's leading `//`, so this root resolves to `//`.
+        self.env_roots = "//"
+        self.assertEqual(self.state(self.elsewhere), "yes")
+
     def test_glob_characters_in_the_root_stay_literal(self) -> None:
         starred = self.tmp / "ws*"
         starred.mkdir()
