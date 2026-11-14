@@ -55,6 +55,13 @@ python3 -m unittest discover -s tests -v
   holds no project-specific strings, loads nothing but Google Fonts, and reads exactly
   the documents `skills/tracker/reference.md` describes; no file in `skills/tracker/`
   carries an absolute local path; and the SKILL.md frontmatter parses.
+- `tests/test_session_scope.py` covers the workspace scope guard: the resolver in
+  `scripts/lib/avengers-scope.sh` (root matching, symlinks, prefix siblings, the
+  `AVENGERS_SCOPE_ROOTS` list, the `avengers-scope` file, and the unconfigured
+  default of in scope everywhere), and what `scripts/session-start.sh` and
+  `scripts/compact-resume.sh` print in each scope. It points `HOME` and
+  `CLAUDE_CONFIG_DIR` at a temporary directory, so your own configuration is never
+  read.
 - `tests/test_script_smoke.py` runs `--help` on every `skills/*/scripts/*.py` and
   `tools/*.py`, which catches import-time errors on older Pythons.
 

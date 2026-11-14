@@ -51,6 +51,43 @@ session start, not hot-reloaded.
 activate the IronMan persona and orchestration rules (writes `.claude/rules/` and
 the `.avengers/` state directory). Restart or reload so the rules take effect.
 
+**Workspace scope (optional).** The plugin's SessionStart hooks print the Avengers
+banner and inject the IronMan persona into every session, and re-inject the
+working rules after a context compaction. To limit that to some directories, list
+them as scope roots. A session whose project directory (`CLAUDE_PROJECT_DIR`, or
+the working directory) is a root or lies under one is in scope; any other session
+gets neither the banner nor the persona. Roots come from the first of these that
+names at least one:
+
+1. The `AVENGERS_SCOPE_ROOTS` environment variable, a `:`-separated list of
+   absolute paths. An empty value (or one made only of `:`) counts as unset, so
+   the file below is used next.
+
+   ```bash
+   export AVENGERS_SCOPE_ROOTS="$HOME/work:$HOME/oss/my-project"
+   ```
+
+2. The file `~/.claude/avengers-scope` (or `$CLAUDE_CONFIG_DIR/avengers-scope`
+   when `CLAUDE_CONFIG_DIR` is set): one absolute path per line. Blank lines and
+   lines starting with `#` are ignored, surrounding whitespace is trimmed, and a
+   leading `~` expands to your home directory.
+
+   ```text
+   # Directories where the Avengers persona applies
+   ~/work
+   /srv/projects/my-project
+   ```
+
+**With no scope configured, the persona applies everywhere**, exactly as it does
+without this feature. Paths are compared after resolving symlinks, and a sibling
+such as `~/work-old` does not match `~/work`. A root that does not resolve (for
+example a relative path or a missing directory) is skipped. If no root resolves,
+the project directory does not resolve, or the scope file exists but cannot be
+read, the scope is unknown: the banner still prints with a note, but the persona
+is not injected and the post-compaction rules are not re-injected. The
+`Avengers plugin root:` line prints in every case, because agents read it.
+Changes take effect at the next session start.
+
 **BMAD-METHOD dependency** — only needed for **`/avengers-dev:bmad`**. The BMAD
 conductor *wraps* the real BMAD-METHOD framework, whose skills require a
 project-level install. In the repo you want to run a BMAD sequence against:
