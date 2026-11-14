@@ -53,7 +53,7 @@ jobs:
         run: python -m compileall -q skills tests tools
 
       - name: Shell syntax
-        run: bash -n scripts/*.sh avengers-sync.sh
+        run: bash -n scripts/*.sh scripts/lib/*.sh avengers-sync.sh
 
       - name: Unit tests
         run: python -m unittest discover -s tests -v
