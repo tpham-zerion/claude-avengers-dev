@@ -285,7 +285,7 @@ function renderTiles() {
   const open = items.filter(i => i.status !== "done");
   const sec = open.filter(i => i.flag === "security").length;
   const dec = open.filter(i => i.flag === "decision" || i.flag === "drift").length;
-  tiles.append(tile("Security", sec, "var(--risk)", "open items"), tile("Parked sign-offs", dec, "var(--muted)", "before cutover, not blocking"));
+  tiles.append(tile("Security", sec, "var(--risk)", "open items"), tile("Parked sign-offs", dec, "var(--muted)", "not blocking"));
 }
 
 function render() {
