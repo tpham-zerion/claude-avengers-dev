@@ -1,0 +1,410 @@
+<title>Progress Tracker</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Progress tracker. The page holds no project data: title, subtitle and repo come from meta/config,
+   work items from items/*, status and the activity log from meta/status, progress from meta/progress.
+   Layout: header on top, then three panes - status and totals on the left, progress and the board in the
+   middle, recent activity on the right. Wide screens hold the frame still and scroll each pane on its own;
+   narrower screens stack the panes and scroll the page. */
+:root {
+  --bg: #f5f7f8; --surface: #ffffff; --fg: #17222b; --muted: #5b6a76; --line: #dde3e8;
+  --accent: #1f6f8b; --accent-soft: #e3f0f5;
+  --ok: #2f7d4f; --ok-soft: #e4f2ea; --warn: #9a6a12; --warn-soft: #f8efdc; --risk: #a63d3d; --risk-soft: #f7e4e4;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f161b; --surface: #162028; --fg: #e3eaef; --muted: #93a3ae; --line: #26333d;
+  --accent: #5cb3d1; --accent-soft: #15303b;
+  --ok: #6cc28f; --ok-soft: #17301f; --warn: #e0b45c; --warn-soft: #33290f; --risk: #e58c8c; --risk-soft: #3a1b1b;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f161b; --surface: #162028; --fg: #e3eaef; --muted: #93a3ae; --line: #26333d;
+  --accent: #5cb3d1; --accent-soft: #15303b;
+  --ok: #6cc28f; --ok-soft: #17301f; --warn: #e0b45c; --warn-soft: #33290f; --risk: #e58c8c; --risk-soft: #3a1b1b;
+  color-scheme: dark }
+
+[hidden] { display: none !important; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 16px; line-height: 1.45; }
+.wrap { max-width: 1760px; margin: 0 auto; padding-block: 20px 32px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+h1 { font-size: 26px; font-weight: 600; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); font-size: 14px; }
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.label { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+.scroll { scrollbar-width: thin; scrollbar-color: var(--line) transparent; overscroll-behavior: contain; }
+
+.panes { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+.side, .center { display: grid; gap: 16px; align-content: start; min-width: 0; }
+
+/* Left pane: what is happening now, then the totals as small stat tiles. */
+.status { display: grid; gap: 18px; align-content: start; }
+.status p { margin: 4px 0 0; }
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 8px; }
+/* Milestones: the project's milestones, top to bottom. */
+.steps { list-style: none; margin: 8px 0 6px; padding: 0; display: grid; gap: 2px; }
+.steps li { display: grid; grid-template-columns: 2.2em minmax(0, 1fr) auto; align-items: baseline; gap: 6px;
+  padding: 4px 0 4px 8px; border-left: 3px solid var(--line); font-size: 14px; min-width: 0; }
+.steps li[data-s="done"] { border-left-color: var(--ok); }
+.steps li[data-s="active"] { border-left-color: var(--accent); }
+.steps b { font-family: var(--mono); font-weight: 600; color: var(--muted); }
+.steps li[data-s="done"] b { color: var(--ok); }
+.steps li[data-s="active"] b { color: var(--accent); }
+.steps .ttl { min-width: 0; overflow-wrap: anywhere; }
+.steps li[data-s="todo"] .ttl { color: var(--muted); }
+.steps a { font-family: var(--mono); font-size: 12px; color: var(--accent); text-decoration: none; }
+.steps a:hover { text-decoration: underline; }
+.steps .ref { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.key { color: var(--muted); font-size: 12px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; min-width: 0; }
+.tile .k { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.tile .v { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 500; line-height: 1.15; }
+.tile .s { font-size: 12px; color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+/* Right pane: recent activity, one entry per line, time above the text. */
+.log { display: grid; gap: 10px; align-content: start; }
+/* Terminal-style log: an inset console, a prompt and timestamp per entry, the text indented beneath it. */
+.log ol { list-style: none; margin: 0; padding: 12px 14px; display: grid; gap: 0; align-content: start;
+  background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  font-family: var(--mono); font-size: 13px; line-height: 1.5; }
+.log li { display: grid; gap: 2px; align-content: start; padding: 12px 0; border-top: 1px dashed var(--line); }
+.log li:first-child { border-top: 0; padding-top: 2px; }
+.log li:last-child { padding-bottom: 2px; }
+.log .ts { color: var(--muted); font-size: 12px; }
+.log .ts::before { content: "› "; color: var(--accent); font-weight: 600; }
+.log .msg { color: var(--fg); padding-left: 1.2em; overflow-wrap: anywhere; }
+
+/* Centre: progress, filters, board. */
+.progress { display: grid; gap: 12px; }
+.progress .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.progress .hero { font-size: 17px; font-weight: 600; }
+.progress .hero .mono { font-weight: 500; }
+.progress .basis { color: var(--muted); font-size: 13px; }
+.meters { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 20px; }
+.meter { display: grid; gap: 4px; min-width: 0; }
+.meter .row { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.meter .row .v { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.track { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.fill { height: 100%; background: var(--accent); border-radius: 4px; }
+.parts { display: flex; flex-wrap: wrap; gap: 6px; font-size: 13px; }
+.parts span { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.parts span[data-s="done"] { color: var(--ok); border-color: var(--ok); }
+
+.filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.filters button { font: inherit; font-size: 14px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--fg); cursor: pointer; }
+.filters button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.filters button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.notice { font-size: 13px; color: var(--warn); }
+
+.board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: start; }
+@media (max-width: 1080px) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .board { grid-template-columns: 1fr; } }
+.col { display: grid; gap: 10px; min-width: 0; }
+.col h2 { font-size: 15px; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 8px; }
+.col h2 .n { font-family: var(--mono); color: var(--muted); font-weight: 400; }
+.list { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.list:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.empty { color: var(--muted); font-size: 14px; padding: 12px; border: 1px dashed var(--line); border-radius: 8px; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-left-width: 3px; border-radius: 6px; padding: 10px 12px;
+  display: grid; gap: 6px; min-width: 0; }
+.card[data-s="active"] { border-left-color: var(--accent); }
+.card[data-s="queued"] { border-left-color: var(--line); }
+.card[data-s="backlog"] { border-left-color: var(--warn); }
+.card[data-s="done"] { border-left-color: var(--ok); }
+.card .t { font-weight: 500; overflow-wrap: anywhere; }
+.card .note { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; white-space: pre-line; }
+.meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; }
+.chip { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); }
+.chip.area { background: transparent; border: 1px solid var(--line); color: var(--muted); font-family: var(--sans); }
+.chip.risk { background: var(--risk-soft); color: var(--risk); }
+.chip.decide { background: var(--warn-soft); color: var(--warn); }
+.meta a { color: var(--accent); text-decoration: none; font-family: var(--mono); }
+.meta a:hover { text-decoration: underline; }
+.meta .ref { font-family: var(--mono); color: var(--muted); }
+.when { color: var(--muted); font-family: var(--mono); font-size: 12px; margin-left: auto; }
+
+/* Three panes from 1200px wide. */
+@media (min-width: 1200px) {
+  .panes { grid-template-columns: minmax(260px, 300px) minmax(0, 1fr) minmax(280px, 340px); align-items: start; }
+}
+/* Fixed frame when the window is big enough: nothing but the panes, the columns and the lists scroll. */
+@media (min-width: 1200px) and (min-height: 600px) {
+  body { margin: 0; height: 100dvh; overflow: hidden; }
+  .wrap { box-sizing: border-box; width: 100%; height: 100dvh; display: flex; flex-direction: column; padding-block: 16px; }
+  .wrap > header { flex: none; }
+  .panes { flex: 1 1 0; min-height: 0; align-items: stretch; }
+  .side { min-height: 0; display: flex; flex-direction: column; }
+  .side.left .status { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+  .side.right { display: flex; flex-direction: column; }
+  .side.right .log { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .side.right .log ol { flex: 1 1 0; min-height: 0; overflow-y: auto; padding-right: 4px; }
+  .center { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+  .center > * { flex: none; }
+  .board { flex: 1 1 0; min-height: 0; align-items: stretch; grid-auto-rows: minmax(0, 1fr); }
+  .col { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .col h2 { flex: none; }
+  .list { flex: 1 1 0; min-height: 0; overflow-y: auto; padding-right: 4px; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1 id="title">Progress Tracker</h1>
+      <div class="sub" id="subtitle" hidden></div>
+    </div>
+    <div class="sub" id="updated">Loading…</div>
+  </header>
+
+  <div class="panes">
+    <aside class="side left" aria-label="Current status">
+      <section class="panel status scroll">
+        <div><span class="label">Working on</span><p id="current">Loading the tracker…</p></div>
+        <div><span class="label">Next</span><p id="next">–</p></div>
+        <div><span class="label">Totals</span><div class="tiles" id="tiles"></div></div>
+        <div id="milestones" hidden>
+          <span class="label">Milestones</span>
+          <ol class="steps" id="steps" aria-label="Milestones"></ol>
+          <div class="key">✓ done · ● in progress · ○ not started. Status read from the code, not the issue state.</div>
+        </div>
+      </section>
+    </aside>
+
+    <main class="center">
+      <section class="panel progress" id="progress" aria-label="Progress" hidden>
+        <div class="top">
+          <span class="label">Progress</span>
+          <span class="hero" id="hero"></span>
+          <span class="basis" id="basis"></span>
+        </div>
+        <div class="meters" id="meters"></div>
+        <div class="parts" id="parts"></div>
+      </section>
+
+      <div class="notice" id="notice" hidden></div>
+      <nav class="filters" id="filters" aria-label="Filter by area"></nav>
+      <section class="board" id="board" aria-label="Work items"></section>
+    </main>
+
+    <aside class="side right" aria-label="Recent activity">
+      <section class="panel log">
+        <span class="label">Recent activity</span>
+        <ol id="log" class="scroll"><li><span class="ts">--</span><span class="msg">Activity appears here as work lands.</span></li></ol>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<script>
+const COLS = [
+  { s: "active",  name: "In progress", color: "var(--accent)" },
+  { s: "queued",  name: "Up next",     color: "var(--muted)" },
+  { s: "backlog", name: "Backlog",     color: "var(--warn)" },
+  { s: "done",    name: "Done",        color: "var(--ok)" },
+];
+const DEFAULT_TITLE = "Progress Tracker";
+const AREA_KEY = "tracker-area";
+let items = [], area = "All", meta = null, progress = null, repo = null;
+
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function fmt(iso) {
+  if (!iso) return "";
+  const d = new Date(iso); if (isNaN(d)) return "";
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+// Log timestamps: "Nov 13 23:12", local time, 24-hour, like a console.
+function stamp(iso) {
+  const d = new Date(iso); if (!iso || isNaN(d)) return "--";
+  const p = n => String(n).padStart(2, "0");
+  return `${d.toLocaleString(undefined, { month: "short" })} ${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+// Only an http(s) URL becomes the link base; anything else leaves issue and PR numbers as plain text.
+function repoBase(url) {
+  if (typeof url !== "string" || !url.trim()) return null;
+  try {
+    const u = new URL(url.trim());
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href.replace(/\/+$/, "") : null;
+  } catch (_) { return null; }
+}
+function link(kind, n) {
+  const text = (kind === "pull" ? "PR #" : "#") + n;
+  if (!repo) return el("span", "ref", text);
+  const a = el("a", null, text);
+  a.href = `${repo}/${kind}/${encodeURIComponent(n)}`; a.target = "_blank"; a.rel = "noopener";
+  return a;
+}
+
+function renderFilters() {
+  const areas = ["All", ...[...new Set(items.map(i => i.area).filter(Boolean))].sort()];
+  if (!areas.includes(area)) area = "All";
+  const f = document.getElementById("filters"); f.replaceChildren();
+  for (const a of areas) {
+    const b = el("button", null, a); b.type = "button"; b.setAttribute("aria-pressed", String(a === area));
+    b.addEventListener("click", () => { area = a; try { localStorage.setItem(AREA_KEY, a); } catch (_) {} render(); });
+    f.append(b);
+  }
+}
+
+function card(i) {
+  const c = el("article", "card"); c.dataset.s = i.status;
+  c.append(el("div", "t", i.title || "Untitled"));
+  if (i.note) c.append(el("div", "note", i.note));
+  const m = el("div", "meta");
+  if (i.area) m.append(el("span", "chip area", i.area));
+  if (i.flag === "security") m.append(el("span", "chip risk", "security"));
+  if (i.flag === "decision") m.append(el("span", "chip decide", "needs decision"));
+  if (i.flag === "drift") m.append(el("span", "chip decide", "drift"));
+  if (i.issue) m.append(link("issues", i.issue));
+  if (i.pr) m.append(link("pull", i.pr));
+  if (i.updatedAt) m.append(el("span", "when", fmt(i.updatedAt)));
+  c.append(m);
+  return c;
+}
+
+function tile(label, value, color, sub) {
+  const t = el("div", "tile");
+  const k = el("div", "k"); const d = el("span", "dot"); d.style.background = color; k.append(d, document.createTextNode(label));
+  t.append(k, el("div", "v", String(value)));
+  if (sub) t.append(el("div", "s", sub));
+  t.title = `${label}: ${value}${sub ? " (" + sub + ")" : ""}`;
+  return t;
+}
+
+function renderTiles() {
+  const tiles = document.getElementById("tiles"); tiles.replaceChildren();
+  const n = s => items.filter(i => i.status === s).length;
+  for (const col of COLS) tiles.append(tile(col.name, n(col.s), col.color));
+  const open = items.filter(i => i.status !== "done");
+  const sec = open.filter(i => i.flag === "security").length;
+  const dec = open.filter(i => i.flag === "decision" || i.flag === "drift").length;
+  tiles.append(tile("Security", sec, "var(--risk)", "open items"), tile("Your call", dec, "var(--warn)", "decisions and drift"));
+}
+
+function render() {
+  renderFilters();
+  renderTiles();
+  const shown = items.filter(i => area === "All" || i.area === area);
+  const board = document.getElementById("board");
+  // Live updates rebuild the board; keep each column where the reader left it.
+  const kept = {};
+  for (const l of board.querySelectorAll(".list")) kept[l.dataset.s] = l.scrollTop;
+  board.replaceChildren();
+  for (const col of COLS) {
+    const list = shown.filter(i => i.status === col.s)
+      .sort((a, b) => col.s === "done"
+        ? String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""))
+        : (a.order ?? 999) - (b.order ?? 999));
+    const sec = el("div", "col");
+    const h = el("h2"); const dot = el("span", "dot"); dot.style.background = col.color;
+    h.append(dot, document.createTextNode(col.name), el("span", "n", String(list.length)));
+    const body = el("div", "list scroll"); body.dataset.s = col.s;
+    body.tabIndex = 0; body.setAttribute("role", "region"); body.setAttribute("aria-label", col.name);
+    if (!list.length) body.append(el("div", "empty", col.s === "backlog" ? "Nothing parked." : "Nothing here."));
+    for (const i of list) body.append(card(i));
+    sec.append(h, body);
+    board.append(sec);
+    if (kept[col.s]) body.scrollTop = kept[col.s];
+  }
+  if (meta) {
+    document.getElementById("current").textContent = meta.current || "–";
+    document.getElementById("next").textContent = meta.next || "–";
+    document.getElementById("updated").textContent = meta.updatedAt ? "Updated " + fmt(meta.updatedAt) : "";
+    const log = document.getElementById("log");
+    const entries = Array.isArray(meta.log) ? meta.log.slice(0, 40) : [];
+    if (entries.length) {
+      log.replaceChildren();
+      for (const e of entries) {
+        const li = el("li"); const ts = el("span", "ts", stamp(e.at));
+        if (e.at) ts.title = new Date(e.at).toLocaleString();
+        li.append(ts, el("span", "msg", e.text || "")); log.append(li);
+      }
+    }
+  }
+}
+
+const MARK = { done: "✓", active: "●", todo: "○" };
+const WORD = { done: "done", active: "in progress", todo: "not started" };
+function renderProgress() {
+  const p = progress, box = document.getElementById("progress"), ms = document.getElementById("milestones");
+  if (!p || !Array.isArray(p.areas)) { box.hidden = true; ms.hidden = true; return; }
+  box.hidden = false; ms.hidden = !(p.milestones || []).length;
+  const done = p.areas.reduce((s, a) => s + (a.done || 0), 0);
+  const total = p.areas.reduce((s, a) => s + (a.total || 0), 0);
+  const pct = total ? Math.round(done / total * 100) : 0;
+  const hero = document.getElementById("hero"); hero.replaceChildren();
+  const unit = typeof p.unit === "string" && p.unit.trim() ? `of ${p.unit.trim()}` : "complete";
+  hero.append(document.createTextNode(`${pct}% ${unit} `), el("span", "mono", `(${done} of ${total})`));
+  document.getElementById("basis").textContent = (p.measuredAt ? "Measured " + fmt(p.measuredAt) + ". " : "") + (p.basis || "");
+  const meters = document.getElementById("meters"); meters.replaceChildren();
+  for (const a of p.areas) {
+    const share = a.total ? a.done / a.total : 0;
+    const m = el("div", "meter"); m.title = `${a.name}: ${a.done} of ${a.total} (${Math.round(share * 100)}%)`;
+    const row = el("div", "row"); row.append(el("span", null, a.name), el("span", "v", `${a.done} / ${a.total}`));
+    const track = el("div", "track"); track.setAttribute("role", "img"); track.setAttribute("aria-label", m.title);
+    const fill = el("div", "fill"); fill.style.width = (share * 100).toFixed(1) + "%"; track.append(fill);
+    m.append(row, track); meters.append(m);
+  }
+  const parts = document.getElementById("parts"); parts.replaceChildren();
+  for (const c of p.components || []) {
+    const s = el("span", null, `${MARK[c.status] || "○"} ${c.name}`); s.dataset.s = c.status; s.title = `${c.name}: ${WORD[c.status] || c.status}`;
+    parts.append(s);
+  }
+  const steps = document.getElementById("steps"); steps.replaceChildren();
+  for (const s of p.milestones || []) {
+    const li = el("li"); li.dataset.s = s.status;
+    li.title = `${s.n}. ${s.title}: ${WORD[s.status] || s.status}${s.issue ? " (#" + s.issue + ")" : ""}`;
+    li.append(el("b", null, `${MARK[s.status] || "○"}${s.n}`), el("span", "ttl", s.title));
+    if (s.issue) li.append(link("issues", s.issue));
+    steps.append(li);
+  }
+}
+
+function renderConfig(c) {
+  const title = (c && typeof c.title === "string" && c.title.trim()) || DEFAULT_TITLE;
+  document.getElementById("title").textContent = title;
+  document.title = title;
+  const sub = document.getElementById("subtitle");
+  sub.textContent = (c && typeof c.subtitle === "string") ? c.subtitle : "";
+  sub.hidden = !sub.textContent;
+  repo = repoBase(c && c.repoUrl);
+}
+
+function showNotice(t) { const n = document.getElementById("notice"); n.textContent = t; n.hidden = !t; }
+
+(async () => {
+  try { const a = localStorage.getItem(AREA_KEY); if (a) area = a; } catch (_) {}
+  render();
+  const db = await window.claude?.use?.("db");
+  if (!db) { showNotice("Live data isn't available in this view. Open the tracker on claude.ai while signed in."); document.getElementById("current").textContent = "–"; document.getElementById("updated").textContent = ""; return; }
+  let gotItems = false, gotMeta = false;
+  const timer = setTimeout(() => { if (!gotItems || !gotMeta) showNotice("The tracker data can't be reached yet. What's shown may be out of date."); }, 10000);
+  const settle = () => { if (gotItems && gotMeta) { clearTimeout(timer); showNotice(""); } };
+  db.collection("items").onSnapshot(snap => {
+    items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (!snap.metadata.fromCache) { gotItems = true; settle(); }
+    render();
+  }, e => { clearTimeout(timer); showNotice("Work items stopped updating (" + e.code + "). Reload to try again."); });
+  db.doc("meta/status").onSnapshot(snap => {
+    meta = snap.exists ? snap.data() : { current: "Nothing recorded yet." };
+    if (!snap.metadata.fromCache) { gotMeta = true; settle(); }
+    render();
+  }, e => { clearTimeout(timer); showNotice("Status stopped updating (" + e.code + "). Reload to try again."); });
+  db.doc("meta/progress").onSnapshot(snap => {
+    progress = snap.exists ? snap.data() : null;
+    renderProgress();
+  }, () => { progress = null; renderProgress(); });
+  // Config renames the page and sets the link base; re-render so cards and milestones pick it up.
+  db.doc("meta/config").onSnapshot(snap => {
+    renderConfig(snap.exists ? snap.data() : null);
+    render(); renderProgress();
+  }, () => { renderConfig(null); render(); renderProgress(); });
+})();
+</script>

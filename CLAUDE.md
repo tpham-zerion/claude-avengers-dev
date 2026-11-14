@@ -73,6 +73,7 @@ Enforces the design-implementation boundary as a hard gate.
 - **/bmad [sequence-name] [quick|standard|full]** - Initiate or resume BMAD via Vision
 - **/sdd [change-name] [quick|standard|full|resume]** - Spec-driven change via Vision: OpenSpec for quick/standard (needs OpenSpec >= 1.13), BMAD for full
 - **/debug-session** - Analyze a --debug log after skill testing
+- **/tracker** - create|start|finish|log|recount|rebuild - Live project progress board (claude.ai Artifact + shared db)
 
 ## Critical Rules
 
