@@ -209,6 +209,7 @@ All skills are namespaced — invoke as `/avengers-dev:<name>`:
 - **`/avengers-dev:avengers-ssl`** - SSL certificate bundle for proxy environments
 - **`/avengers-dev:avengers-checkpoint`** / **`:avengers-resume`** / **`:avengers-log`** - Session state
 - **`/avengers-dev:avengers-vibes`** - Avengers-themed spinner verbs
+- **`/avengers-dev:tracker`** - Live project progress board: one shared claude.ai Artifact page whose items, status, log and progress live in the artifact's database
 
 Type `/avengers-dev:` in the prompt to browse the full list.
 

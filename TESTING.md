@@ -51,6 +51,10 @@ python3 -m unittest discover -s tests -v
   version. A failure names the file, the line, and what was expected. If you change
   a phase, a piece of equipment, a skill or a `§` section, update every copy the
   test names.
+- `tests/test_tracker_skill.py` keeps the tracker page generic: `skills/tracker/template.html`
+  holds no project-specific strings, loads nothing but Google Fonts, and reads exactly
+  the documents `skills/tracker/reference.md` describes; no file in `skills/tracker/`
+  carries an absolute local path; and the SKILL.md frontmatter parses.
 - `tests/test_script_smoke.py` runs `--help` on every `skills/*/scripts/*.py` and
   `tools/*.py`, which catches import-time errors on older Pythons.
 
