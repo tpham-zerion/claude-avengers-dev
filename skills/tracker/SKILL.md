@@ -94,7 +94,10 @@ A finish usually comes with a start (the next item), a `meta/status` change and 
 log line: send them as one `batch`.
 
 `flag` drives the left-pane tiles: open items flagged `security` count under
-Security; open items flagged `decision` or `drift` count under "Your call".
+Security; open items flagged `decision` or `drift` count under "Parked sign-offs".
+Those are items parked for a sign-off later, before cutover. They never block
+work and are not a request for input: keep working, and do not stop to ask about
+them. A `decision` item's card reads "sign-off later".
 
 ### log
 

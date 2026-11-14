@@ -260,7 +260,7 @@ function card(i) {
   const m = el("div", "meta");
   if (i.area) m.append(el("span", "chip area", i.area));
   if (i.flag === "security") m.append(el("span", "chip risk", "security"));
-  if (i.flag === "decision") m.append(el("span", "chip decide", "needs decision"));
+  if (i.flag === "decision") m.append(el("span", "chip decide", "sign-off later"));
   if (i.flag === "drift") m.append(el("span", "chip decide", "drift"));
   if (i.issue) m.append(link("issues", i.issue));
   if (i.pr) m.append(link("pull", i.pr));
@@ -285,7 +285,7 @@ function renderTiles() {
   const open = items.filter(i => i.status !== "done");
   const sec = open.filter(i => i.flag === "security").length;
   const dec = open.filter(i => i.flag === "decision" || i.flag === "drift").length;
-  tiles.append(tile("Security", sec, "var(--risk)", "open items"), tile("Your call", dec, "var(--warn)", "decisions and drift"));
+  tiles.append(tile("Security", sec, "var(--risk)", "open items"), tile("Parked sign-offs", dec, "var(--muted)", "before cutover, not blocking"));
 }
 
 function render() {

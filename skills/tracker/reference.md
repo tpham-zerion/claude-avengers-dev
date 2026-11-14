@@ -38,7 +38,7 @@ One doc per work item, shown as a card on the board.
 | `pr` | number | PR number, linked when `repoUrl` is set. |
 | `note` | string | Plain text under the title; line breaks kept. |
 | `order` | number | Sort order in every column but Done (lower first; unset sorts last). |
-| `flag` | `security` \| `decision` \| `drift` | Chip on the card; open flagged items count in the Security and "Your call" tiles. |
+| `flag` | `security` \| `decision` \| `drift` | Chip on the card; open flagged items count in the Security and "Parked sign-offs" tiles (parked, never blocking). |
 | `updatedAt` | ISO string | Shown on the card. Done sorts newest first by it. |
 
 ```json
