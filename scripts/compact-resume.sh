@@ -69,6 +69,12 @@ if [ "$AVENGERS_SCOPE" = unknown ]; then
   echo '⚠️  Avengers Dev: workspace scope could not be determined (the project directory, every configured scope root, or the scope file failed to resolve) - rule re-injection was skipped.'
 fi
 
+# The session's project directory for `pair-registry.py --project-dir`, in scope
+# only and raw; see session-start.sh.
+if [ "$AVENGERS_SCOPE" = yes ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+  echo "Avengers project dir: $CLAUDE_PROJECT_DIR"
+fi
+
 # Absolute plugin root for agent Bash (CLAUDE_PLUGIN_ROOT is empty in subagent Bash).
 # DO NOT GUARD OR EARLY-EXIT PAST THIS - it must print in every scope.
 PLUGIN_ROOT="$(cd "${CLAUDE_PLUGIN_ROOT:-$(dirname "${BASH_SOURCE[0]}")/..}" 2>/dev/null && pwd -P)"

@@ -29,13 +29,15 @@ Quality Gate and Closure Loop with the paired loop.
   - `agent_id` present: a target with whitespace or `[` is denied first. A sender registered in a pair may message `main` and its own partner's agentId; any other subagent only `main`. Another team's agents are denied. Denials exit 2 with the reason on stderr.
 - **Fail closed (subagents).** A missing, unreadable or malformed registry, an unset `CLAUDE_PROJECT_DIR`, or a malformed `agent_id` leaves only `main`. A payload that is not a JSON object cannot be attributed to the main session and is denied. Claude Code treats any exit other than 0 and 2 as non-blocking, so the shell entry maps a crash or a missing `python3` to exit 2 (main session included).
 - **Debug.** `AVENGERS_PAIR_GUARD_LOG=<file>` appends one JSON line per guarded call with the payload's keys only (plus `agent_type`).
-- **Registry.** `{"version": 1, "pairs": {"<team>": {"thor": "<id>", "captain": "<id>"}}}`, written atomically. An agentId belongs to one team. IronMan registers each id as it gets it and unregisters the team when the loop ends.
+- **Registry.** `{"version": 1, "pairs": {"<team>": {"thor": "<id>", "captain": "<id>"}}}`, written atomically; `register` and `unregister` hold an exclusive `flock` on `.avengers/pairs.lock` around the read-modify-write. An agentId belongs to one team. IronMan dispatches both agents with `run_in_background`, registers each id immediately after its spawn returns, passes `--project-dir` from the in-scope `Avengers project dir:` session line, and unregisters the team when the loop ends. Thor may retry a round-1 "no registered partner" denial once.
 
 ## Mechanism and open item
 - **Relied on:** resume-by-message. Each side ends its run after sending, and the partner's message resumes it. This supersedes, for paired builder teams only, the "no SendMessage path" note in `agent-escalation-path.md`.
 - **Open item:** verify resume-by-message end to end (a finished subagent resumed by a `SendMessage` from its partner, and from `main`) on the Claude Code versions the plugin supports.
 - **Open item:** confirm empirically, once, with `AVENGERS_PAIR_GUARD_LOG`, that main-session SendMessage calls carry no `agent_id` and that subagent calls carry it. The hooks docs state the latter; the former is implied, not stated.
-- **Open item:** the registry is writable by agents with Write or Bash, so the guard stops misdirected or injected targets, not a deliberately hostile agent.
+- **Open item:** the registry is writable by agents with Write or Bash, and an agentId is any single word, so the guard stops misdirected or injected targets, not a deliberately hostile agent.
+- **Open item:** the `agent_id` in the hook input equals the agentId the Agent tool returns at spawn (the id IronMan registers). Unverified; if they differ, every paired send is denied and the fallback takes over.
+- **Open item:** a missing hook script cannot fail closed (`bash` exits 127, non-blocking).
 - **Fallback:** if a Captain run ends with no verdict copy to `main` for the round, or a partner never resumes, IronMan unregisters the pair and runs the review loop by re-dispatch, as for an unpaired team.
 
 ## Acceptance Criteria

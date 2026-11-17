@@ -99,7 +99,19 @@ main session (`main`) and its own partner; any other subagent may message only
 targets, another team's agents and unregistered ids. For subagents the hook
 fails closed: with no readable registry only `main` is allowed. A hook input
 that cannot be parsed, or a check that cannot run (for example `python3` is
-missing), denies the call, main session included.
+missing), denies the call, main session included. One case cannot fail
+closed: if the hook script itself is missing, `bash` fails with exit 127, which
+Claude Code treats as a non-blocking error, so the call goes through.
+
+The guard stops misdirected messages, not a hostile agent: any agent with Bash
+or Write access can edit `.avengers/pairs.json`, and an agentId is accepted as
+any single word (letters, digits, `-` and `_`).
+
+The orchestrator registers pairs with `pair-registry.py --project-dir` set to
+the `Avengers project dir:` line that the SessionStart and post-compaction hooks
+print in scope, since `CLAUDE_PROJECT_DIR` is not visible from the Bash tool.
+Concurrent `register` and `unregister` calls are serialised with a lock on
+`.avengers/pairs.lock`.
 
 Telling the main session apart relies on Claude Code's hook input: `agent_id`
 is documented as present for subagent calls, and its absence on main-session

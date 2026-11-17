@@ -29,13 +29,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GUARD_HOOK = ROOT / "scripts" / "sendmessage-guard.sh"
 REGISTRY_SCRIPT = ROOT / "scripts" / "pair-registry.py"
 HOOKS_JSON = ROOT / "hooks" / "hooks.json"
-HOOK_COMMAND = "bash ${CLAUDE_PLUGIN_ROOT}/scripts/sendmessage-guard.sh"
+HOOK_COMMAND = 'bash "${CLAUDE_PLUGIN_ROOT}/scripts/sendmessage-guard.sh"'
 
 THOR_ID = "a1b2c3d4e5f6-thor"
 CAPTAIN_ID = "a9f8e7d6c5b4-captain"
@@ -171,6 +172,25 @@ class SubagentTests(GuardFixture):
                 self.assertDecision(proc, DENY)
                 self.assertIn("whitespace or `[`", proc.stderr)
 
+    def test_lookalike_and_invisible_targets_are_denied(self) -> None:
+        """A target that only looks like `main` or the partner's id is not it."""
+        self.register_pairs()
+        cyrillic_a, zero_width, nbsp = "\u0430", "\u200b", "\u00a0"
+        for target in ("m" + cyrillic_a + "in", "main" + zero_width, zero_width + "main",
+                       CAPTAIN_ID.replace("a", cyrillic_a, 1), CAPTAIN_ID + zero_width,
+                       CAPTAIN_ID[:4] + "\u200d" + CAPTAIN_ID[4:], CAPTAIN_ID + "\ufeff",
+                       CAPTAIN_ID + nbsp, "\uff4d\uff41\uff49\uff4e",  # fullwidth "main"
+                       CAPTAIN_ID.upper()):
+            with self.subTest(to=ascii(target)):
+                self.assertDecision(self.hook(payload(target, sender=THOR_ID)), DENY)
+
+    def test_lookalike_sender_is_not_the_registered_agent(self) -> None:
+        self.register_pairs()
+        for sender in (THOR_ID.replace("a", "\u0430", 1), THOR_ID + "\u200b"):
+            with self.subTest(sender=ascii(sender)):
+                self.assertDecision(self.hook(payload(CAPTAIN_ID, sender=sender)), DENY)
+                self.assertDecision(self.hook(payload("main", sender=sender)), ALLOW)
+
     def test_bad_targets_are_denied(self) -> None:
         self.register_pairs()
         for target in ("", None, 42, [CAPTAIN_ID], {"id": CAPTAIN_ID}):
@@ -301,6 +321,39 @@ class RegistryCommandTests(GuardFixture):
         # Unregistering an absent team is a no-op, not an error.
         self.assertEqual(self.registry_cmd("unregister", "--team", "gone").returncode, 0)
 
+    def test_parallel_registers_all_land(self) -> None:
+        """Read-modify-write is serialised: no register is lost to a race."""
+        teams = [f"team-{i:02d}" for i in range(20)]
+        with ThreadPoolExecutor(max_workers=len(teams)) as pool:
+            procs = list(pool.map(lambda i: self.registry_cmd(
+                "register", "--team", teams[i], "--thor", f"t{i:02d}-thor",
+                "--captain", f"c{i:02d}-captain"), range(len(teams))))
+        for proc in procs:
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        pairs = json.loads(self.registry.read_text())["pairs"]
+        self.assertEqual(sorted(pairs), teams)
+        self.assertEqual(pairs["team-07"], {"thor": "t07-thor", "captain": "c07-captain"})
+
+    def test_register_racing_unregister(self) -> None:
+        """Unregisters of old teams and registers of new ones, interleaved: every new
+        team is present and every old one is gone."""
+        old = [f"old-{i:02d}" for i in range(10)]
+        new = [f"new-{i:02d}" for i in range(10)]
+        self.write_registry({"version": 1, "pairs": {
+            team: {"thor": f"{team}-thor"} for team in old}})
+        jobs = [("unregister", "--team", team) for team in old]
+        jobs += [("register", "--team", team, "--thor", f"{team}-thor") for team in new]
+        jobs = [job for pair in zip(jobs[:10], jobs[10:]) for job in pair]
+        with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+            procs = list(pool.map(lambda job: self.registry_cmd(*job), jobs))
+        for proc in procs:
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(sorted(json.loads(self.registry.read_text())["pairs"]), new)
+
+    def test_lock_file_sits_beside_the_registry(self) -> None:
+        self.registry_cmd("register", "--team", "team-a", "--thor", THOR_ID)
+        self.assertTrue((self.project / ".avengers" / "pairs.lock").exists())
+
     def test_register_rejects_bad_input(self) -> None:
         for args in (("--team", "team-a"),
                      ("--team", "team-a", "--thor", "worker [3fa9c1]"),
@@ -332,6 +385,15 @@ class RegistryCommandTests(GuardFixture):
 
 
 class HookWiringTests(unittest.TestCase):
+    def test_missing_script_cannot_fail_closed(self) -> None:
+        """Documents a limit, not a feature: bash exits 127 on a missing script, which
+        Claude Code treats as non-blocking, so the README must say so."""
+        proc = subprocess.run(["bash", str(ROOT / "scripts" / "no-such-guard.sh")],
+                              input=payload("worker", sender=THOR_ID), capture_output=True,
+                              text=True, timeout=30, check=False)
+        self.assertEqual(proc.returncode, 127)
+        self.assertIn("exit 127", (ROOT / "README.md").read_text())
+
     def test_pretooluse_hook_guards_sendmessage(self) -> None:
         hooks = json.loads(HOOKS_JSON.read_text())["hooks"]["PreToolUse"]
         commands = [h["command"] for entry in hooks if entry.get("matcher") == "SendMessage"

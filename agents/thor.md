@@ -126,8 +126,10 @@ Reviewers). `/bmad` and `/sdd` relay dispatches are never paired.
 - **Bounds.** Messages carry review requests, your completion report and
   escalations only, never for delegating work. You still never spawn agents.
   The `SendMessage` guard denies any target other than `main` and your own
-  registered partner; a denied send is escalated to `main`, never retried under
-  another name.
+  registered partner. On your first review request only, a "no registered
+  partner" denial can mean IronMan has not finished registering the pair: wait
+  briefly and retry once, to the same id. Any other denial, or a second one, is
+  escalated to `main`, never retried under another name.
 - **No pair id,** no messaging: return your report as below.
 
 ## Getting Help Mid-Implementation

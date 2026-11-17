@@ -50,14 +50,18 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
 import sys
 import tempfile
 from pathlib import Path
+from typing import Iterator
 
 REGISTRY_REL = Path(".avengers") / "pairs.json"
+# Held exclusively around every read-modify-write (register, unregister).
+LOCK_REL = Path(".avengers") / "pairs.lock"
 REGISTRY_VERSION = 1
 IRONMAN_TARGET = "main"
 GUARDED_TOOL = "SendMessage"
@@ -120,6 +124,23 @@ def load(project_dir: Path) -> dict:
         return validate(json.loads(text))
     except json.JSONDecodeError as exc:
         raise RegistryError(f"{path}: not JSON ({exc})") from exc
+
+
+@contextlib.contextmanager
+def locked(project_dir: Path) -> Iterator[None]:
+    """Hold an exclusive lock on .avengers/pairs.lock for a read-modify-write, so
+    concurrent register and unregister calls cannot drop each other's changes.
+    Readers (`list`, `guard`) need no lock: save() replaces the file atomically."""
+    import fcntl  # POSIX only, like the plugin's bash hooks; imported here so --help loads anywhere
+
+    lock_path = project_dir / LOCK_REL
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def save(project_dir: Path, data: dict) -> Path:
@@ -269,17 +290,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "guard":
         return guard(sys.stdin.read(), dict(os.environ))
     project_dir = project_dir_of(args)
+    ids = {role: getattr(args, role) for role in ROLES if getattr(args, role, None)}
+    if args.command == "register" and not ids:
+        print("register needs --thor, --captain or both", file=sys.stderr)
+        return EXIT_ERROR
     try:
-        data = load(project_dir)
-        if args.command == "register":
-            ids = {role: getattr(args, role) for role in ROLES if getattr(args, role)}
-            if not ids:
-                print("register needs --thor, --captain or both", file=sys.stderr)
-                return EXIT_ERROR
-            save(project_dir, register(data, args.team, ids))
-        elif args.command == "unregister":
-            if data["pairs"].pop(args.team, None) is not None:
-                save(project_dir, data)
+        if args.command == "list":
+            data = load(project_dir)
+        else:
+            with locked(project_dir):
+                data = load(project_dir)
+                if args.command == "register":
+                    save(project_dir, register(data, args.team, ids))
+                elif data["pairs"].pop(args.team, None) is not None:
+                    save(project_dir, data)
     except (RegistryError, ValueError, OSError) as exc:
         print(f"pair-registry: {exc}", file=sys.stderr)
         return EXIT_ERROR

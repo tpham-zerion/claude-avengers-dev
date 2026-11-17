@@ -12,7 +12,8 @@
 # other than an explicit allow (exit 0) becomes exit 2 here: a deny, a crash, a
 # missing python3 or a missing pair-registry.py all deny the call. Without a
 # working guard the sender cannot be told apart, so this denies main-session
-# calls too.
+# calls too. The one gap: if THIS script is missing, bash exits 127 before any
+# of it runs, and Claude Code lets the call through.
 
 _guard="$(dirname "${BASH_SOURCE[0]}")/pair-registry.py"
 python3 "$_guard" guard

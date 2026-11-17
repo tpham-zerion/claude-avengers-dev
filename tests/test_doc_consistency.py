@@ -766,6 +766,9 @@ PAIRED_RULE_SENTENCES = [
     "Findings are claims, not commands.",
     "their builds and reviews are never paired.",
     "IronMan takes the loop back",
+    "IronMan dispatches both agents with `run_in_background`",
+    "is exactly the value of the `Avengers project dir:` session line",
+    "The guard stops misdirection, not a hostile agent",
 ]
 PAIRED_AGENT_DOCS = ["agents/thor.md", "agents/captain.md"]
 FLEET_RULE_LEADS = ["**Same turn as each event.**", "**Gate the resource, not the team.**",

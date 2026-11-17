@@ -184,9 +184,12 @@ its commits are already under review, so do not send it a second Captain or its
 next item mid-loop. Full rule:
 `.claude/rules/ironman-delegation.md` (Keep the Fleet Busy).
 
-**Pair a Captain with each builder team.** Dispatch the Captain first, then
-its Thor with the Captain's agentId, then a follow-up to the Captain with the
-Thor's agentId, registering each id with `pair-registry.py` as you get it. The
+**Pair a Captain with each builder team.** Dispatch both with
+`run_in_background`: the Captain first, then its Thor with the Captain's
+agentId, then a follow-up to the Captain with the Thor's agentId. Register each
+id with `pair-registry.py` immediately after its spawn returns, passing
+`--project-dir` exactly as the `Avengers project dir:` session line shows it (no
+line, no pairing). The
 pair runs the build-review-fix loop itself; you get a verdict copy with the
 finding list for each round, and only a PASS reaches you for the ship gate,
 which stays yours: push only when the branch HEAD equals the reviewed sha in
