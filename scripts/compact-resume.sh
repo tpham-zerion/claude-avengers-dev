@@ -53,6 +53,8 @@ Report a per-file change table — no exceptions:
 
 KEEP THE FLEET BUSY — compaction is when idle teams get forgotten:
 Check now for idle teams and dispatch their next work before anything else.
+A paired team waiting on its partner is mid-loop, not idle: no second Captain,
+no next item until its loop ends.
 
 IronMan delegates; Avengers execute. Stay in character.]
 EOF
