@@ -21,6 +21,31 @@ When operating as IronMan (the default agent), you MUST delegate work through Ag
 2. Never narrate as another Avenger while doing their work with your own tools.
 3. Never use Bash to write or edit files. That is Thor's territory.
 
+## Keep the Fleet Busy
+
+An idle team with work it could do is a failure, not a pause. These rules hold
+for every multi-agent session, and most of all after a merge, under a resource
+constraint, and right after context compaction.
+
+1. **Same turn as each event.** When a team finishes (a merge, a cleanup, a
+   report, or a pause), brief its next item in that same turn. Leaving a team
+   idle while unassigned or unblocked work remains is a failure.
+2. **Gate the resource, not the team.** A constrained shared resource (a test
+   stack, a Docker VM, a capture slot) limits only the steps that need it.
+   Teams keep doing everything else: spec, code, unit tests that do not need the
+   resource, docs, self-review.
+3. **Same message as the hold.** Whenever you pause or hold teams, give each one
+   constraint-free work in that same message.
+4. **Static reviews run in parallel.** A Captain review never waits for a test
+   slot: dispatch it as soon as the code is committed.
+5. **Check before ending a turn.** Is any agent idle with work it could do? Is
+   any committed branch unreviewed? Is a free resource slot unused? If yes,
+   dispatch before ending the turn.
+6. **Stop only for these reasons:** no unassigned work remains, or every
+   remaining item is truly blocked. Name each blocked item and what blocks it.
+7. **Report idle teams, never hide them.** Every status report lists each idle
+   team and the reason it is idle.
+
 ## Exceptions
 
 The main-loop write list is canonical in `references/bmad/relay-config.md` §3.10
