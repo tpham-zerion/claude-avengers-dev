@@ -1,15 +1,18 @@
 #!/bin/bash
 # Avengers Dev - PreToolUse guard for SendMessage (paired reviewers).
 #
-# Paired agents may message only IronMan (`main`) and the agentIds IronMan
-# registered in <project>/.avengers/pairs.json. The decision is made by
-# `pair-registry.py guard`, which reads the hook payload on stdin; see that file
-# for the rules.
+# Restricts subagents only (payloads carrying `agent_id`): a paired agent may
+# message IronMan (`main`) and its own partner registered in
+# <project>/.avengers/pairs.json; any other subagent only `main`. Main-session
+# calls are not restricted. The decision is made by `pair-registry.py guard`,
+# which reads the hook payload on stdin; see that file for the rules.
 #
 # FAILS CLOSED. Claude Code blocks a tool call only on exit 2; any other non-zero
 # exit is a non-blocking error and the call would go through. So every outcome
 # other than an explicit allow (exit 0) becomes exit 2 here: a deny, a crash, a
-# missing python3 or a missing pair-registry.py all deny the call.
+# missing python3 or a missing pair-registry.py all deny the call. Without a
+# working guard the sender cannot be told apart, so this denies main-session
+# calls too.
 
 _guard="$(dirname "${BASH_SOURCE[0]}")/pair-registry.py"
 python3 "$_guard" guard

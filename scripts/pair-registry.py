@@ -6,7 +6,7 @@ A paired builder team is one Thor and its own Captain that message each other an
 IronMan (`main`) mid-run (`.claude/rules/ironman-delegation.md`, Paired Reviewers).
 IronMan records each pair's agentIds here when it pairs them, and the plugin's
 PreToolUse hook on SendMessage (scripts/sendmessage-guard.sh) runs `guard`, which
-allows only `main` and the registered agentIds.
+limits what a subagent may message.
 
 The registry is project-local, at <project dir>/.avengers/pairs.json:
   {"version": 1,
@@ -24,11 +24,23 @@ The project dir is --project-dir, else CLAUDE_PROJECT_DIR, else the current
 directory. `guard` takes no --project-dir: it reads CLAUDE_PROJECT_DIR only, and
 with that unset it treats the registry as missing.
 
-`guard` FAILS CLOSED. It allows `main` and the agentIds of a valid registry, and
-denies everything else: other sessions, agent or session names, `name [ref]`
-targets, unregistered ids, and any target containing whitespace or `[`. A missing,
-unreadable or malformed registry leaves only `main`. An unparsable payload is
-denied outright.
+`guard` restricts SUBAGENTS only. Claude Code puts `agent_id` in the PreToolUse
+payload when the call fires inside a subagent or teammate; a main-session call has
+none. `agent_type` alone is not a subagent signal (a `claude --agent <name>`
+session sets it too), so the guard keys on `agent_id` only.
+  - No `agent_id`: the main session (IronMan) - allowed, any target.
+  - `agent_id` present: a target containing whitespace or `[` (a `name [ref]`,
+    another session, a multi-word name) is denied first. Then a sender registered
+    in a pair may message `main` and its own partner's agentId only; any other
+    subagent may message `main` only.
+For subagents it FAILS CLOSED: a missing, unreadable or malformed registry, an
+unset CLAUDE_PROJECT_DIR, or a malformed `agent_id` leaves only `main`. A payload
+that is not a JSON object cannot be attributed to the main session, so it is
+denied.
+
+Debugging: set AVENGERS_PAIR_GUARD_LOG=<file> to append one JSON line per guard
+call with the payload's keys (never its values, apart from `agent_type`), to
+confirm on a given Claude Code version which calls carry `agent_id`.
 
 Exit codes:
   0 = success (guard: allowed)
@@ -126,10 +138,6 @@ def save(project_dir: Path, data: dict) -> Path:
     return path
 
 
-def registered_ids(data: dict) -> set[str]:
-    return {agent_id for pair in data["pairs"].values() for agent_id in pair.values()}
-
-
 def register(data: dict, team: str, ids: dict[str, str]) -> dict:
     """Add or update one team. An agentId may belong to one team only."""
     for role, agent_id in ids.items():
@@ -143,6 +151,17 @@ def register(data: dict, team: str, ids: dict[str, str]) -> dict:
 
 # -- guard ----------------------------------------------------------------------------------------
 
+def partner_of(data: dict, sender: str) -> str | None:
+    """The agentId paired with sender, or None when sender is unregistered or its
+    partner is not registered yet."""
+    for pair in data["pairs"].values():
+        for role, agent_id in pair.items():
+            if agent_id == sender:
+                other = next(r for r in ROLES if r != role)
+                return pair.get(other)
+    return None
+
+
 def decide(payload: object, project_dir: Path | None) -> tuple[bool, str]:
     """(allowed, reason) for one PreToolUse payload. Pure apart from reading the
     registry under project_dir; project_dir None means no registry."""
@@ -150,25 +169,45 @@ def decide(payload: object, project_dir: Path | None) -> tuple[bool, str]:
         return False, "the hook payload is not a JSON object"
     if payload.get("tool_name") != GUARDED_TOOL:
         return True, f"not a {GUARDED_TOOL} call"
+    if "agent_id" not in payload:
+        return True, "a main-session call (no agent_id)"
     tool_input = payload.get("tool_input")
     target = tool_input.get("to") if isinstance(tool_input, dict) else None
     if not isinstance(target, str) or not target:
         return False, "the SendMessage call has no `to` target"
-    if target == IRONMAN_TARGET:
-        return True, "IronMan (main)"
     if FORBIDDEN_TARGET_CHARS.search(target):
         return False, (f"target {target!r} contains whitespace or `[`: names, "
                        f"`name [ref]` targets and other sessions are never allowed")
+    if target == IRONMAN_TARGET:
+        return True, "IronMan (main)"
+    sender = payload["agent_id"]
+    if not isinstance(sender, str) or not AGENT_ID.match(sender):
+        return False, "the sender's agent_id is malformed, so only `main` is allowed"
     if project_dir is None:
         return False, "CLAUDE_PROJECT_DIR is not set, so no pair registry can be read"
     try:
         data = load(project_dir)
     except RegistryError as exc:
         return False, f"the pair registry is unreadable ({exc})"
-    if target in registered_ids(data):
-        return True, "a registered paired agent"
-    return False, (f"target {target!r} is not a paired agentId in "
-                   f"{registry_path(project_dir)}")
+    partner = partner_of(data, sender)
+    if partner is None:
+        return False, (f"sender {sender} has no registered partner in "
+                       f"{registry_path(project_dir)}, so only `main` is allowed")
+    if target == partner:
+        return True, "the sender's own registered partner"
+    return False, f"target {target!r} is not the sender's registered partner"
+
+
+def log_payload_keys(payload: object, log_path: str) -> None:
+    """Append the payload's shape (keys only) to log_path; never fails the guard."""
+    record = {"keys": sorted(payload) if isinstance(payload, dict) else None,
+              "has_agent_id": isinstance(payload, dict) and "agent_id" in payload,
+              "agent_type": payload.get("agent_type") if isinstance(payload, dict) else None}
+    try:
+        with open(log_path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    except OSError:
+        pass
 
 
 def guard(stdin_text: str, env: dict[str, str]) -> int:
@@ -176,12 +215,14 @@ def guard(stdin_text: str, env: dict[str, str]) -> int:
         payload = json.loads(stdin_text)
     except json.JSONDecodeError:
         payload = None
+    if env.get("AVENGERS_PAIR_GUARD_LOG"):
+        log_payload_keys(payload, env["AVENGERS_PAIR_GUARD_LOG"])
     project = env.get("CLAUDE_PROJECT_DIR") or None
     allowed, reason = decide(payload, Path(project) if project else None)
     if allowed:
         return EXIT_OK
-    print(f"SendMessage denied: {reason}. Paired agents may message only IronMan "
-          f"(`main`) and their registered pair; escalate to `main` instead.",
+    print(f"SendMessage denied: {reason}. A paired agent may message only IronMan "
+          f"(`main`) and its own registered partner; escalate to `main` instead.",
           file=sys.stderr)
     return EXIT_DENY
 

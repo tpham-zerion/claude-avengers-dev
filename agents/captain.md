@@ -212,7 +212,7 @@ relay dispatches are never paired.
   brief goes to IronMan (`main`).
 - **Bounds.** Messages carry findings, verdicts and escalations only, never for
   delegating work. You stay read-only. The `SendMessage` guard denies any target
-  other than `main` and your registered pair.
+  other than `main` and your own registered partner.
 - **No pair id,** no messaging: return your report as before.
 
 ## Equipment: Lenses

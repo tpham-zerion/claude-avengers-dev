@@ -125,8 +125,8 @@ Reviewers). `/bmad` and `/sdd` relay dispatches are never paired.
   slot) or anything outside your brief goes to IronMan (`main`).
 - **Bounds.** Messages carry review requests, your completion report and
   escalations only, never for delegating work. You still never spawn agents.
-  The `SendMessage` guard denies any target other than `main` and your
-  registered pair; a denied send is escalated to `main`, never retried under
+  The `SendMessage` guard denies any target other than `main` and your own
+  registered partner; a denied send is escalated to `main`, never retried under
   another name.
 - **No pair id,** no messaging: return your report as below.
 

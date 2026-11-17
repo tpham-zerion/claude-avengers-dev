@@ -1,17 +1,20 @@
 """Tests for the paired-reviewer SendMessage guard (stdlib unittest).
 
 The guard is the runtime enforcement of the Paired Reviewers rule in
-`.claude/rules/ironman-delegation.md`: a PreToolUse hook on SendMessage that allows
-`main` and the agentIds IronMan registered in `<project>/.avengers/pairs.json`,
-and denies every other target. Covers:
+`.claude/rules/ironman-delegation.md`: a PreToolUse hook on SendMessage that
+restricts subagents only. A payload with no `agent_id` is a main-session call and
+is allowed. A subagent registered in `<project>/.avengers/pairs.json` may message
+`main` and its own partner; any other subagent only `main`. Covers:
 
 1. `scripts/sendmessage-guard.sh` end to end, fed a hook payload on stdin: allowed
-   targets exit 0, denied ones exit 2 with a reason on stderr.
-2. Fail closed: no registry, an unreadable or malformed one, no
-   CLAUDE_PROJECT_DIR, a bad payload, or a guard that cannot run leave only `main`
-   (or nothing) allowed - never an exit other than 0 or 2.
-3. `pair-registry.py register|unregister|list`, the commands IronMan runs.
-4. The hook is wired in `hooks/hooks.json`.
+   calls exit 0, denied ones exit 2 with a reason on stderr.
+2. Fail closed for subagents: no registry, an unreadable or malformed one, no
+   CLAUDE_PROJECT_DIR or a malformed agent_id leave only `main`; a payload that
+   is not a JSON object, or a guard that cannot run, is denied - never an exit
+   other than 0 or 2.
+3. The AVENGERS_PAIR_GUARD_LOG debug line (payload keys only).
+4. `pair-registry.py register|unregister|list`, the commands IronMan runs.
+5. The hook is wired in `hooks/hooks.json`.
 
 Every subprocess gets HOME and CLAUDE_PROJECT_DIR pointed into a tmpdir.
 
@@ -36,13 +39,20 @@ HOOK_COMMAND = "bash ${CLAUDE_PLUGIN_ROOT}/scripts/sendmessage-guard.sh"
 
 THOR_ID = "a1b2c3d4e5f6-thor"
 CAPTAIN_ID = "a9f8e7d6c5b4-captain"
+THOR_B_ID = "b1b2c3d4e5f6-thor"
+CAPTAIN_B_ID = "b9f8e7d6c5b4-captain"
+LONE_ID = "c0c0c0c0c0c0-blackwidow"
 ALLOW, DENY = 0, 2
+MAIN_SESSION = object()  # sentinel: build a payload with no agent_id
 
 
-def payload(to: object, tool: str = "SendMessage") -> str:
-    return json.dumps({"session_id": "s", "hook_event_name": "PreToolUse",
-                       "tool_name": tool,
-                       "tool_input": {"to": to, "message": "round 1 review request"}})
+def payload(to: object, sender: object = MAIN_SESSION, tool: str = "SendMessage",
+            **extra: object) -> str:
+    data = {"session_id": "s", "hook_event_name": "PreToolUse", "tool_name": tool,
+            "tool_input": {"to": to, "message": "round 1 review request"}, **extra}
+    if sender is not MAIN_SESSION:
+        data["agent_id"] = sender
+    return json.dumps(data)
 
 
 class GuardFixture(unittest.TestCase):
@@ -54,7 +64,8 @@ class GuardFixture(unittest.TestCase):
         self.registry = self.project / ".avengers" / "pairs.json"
 
     def env(self, project_dir: Path | None = None, **extra: str) -> dict[str, str]:
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("CLAUDE_PROJECT_DIR", "AVENGERS_PAIR_GUARD_LOG")}
         env["HOME"] = str(self.tmp)
         if project_dir is not None:
             env["CLAUDE_PROJECT_DIR"] = str(project_dir)
@@ -77,9 +88,10 @@ class GuardFixture(unittest.TestCase):
         self.registry.parent.mkdir(parents=True, exist_ok=True)
         self.registry.write_text(data if isinstance(data, str) else json.dumps(data))
 
-    def register_pair(self) -> None:
-        self.write_registry({"version": 1,
-                             "pairs": {"team-a": {"thor": THOR_ID, "captain": CAPTAIN_ID}}})
+    def register_pairs(self) -> None:
+        self.write_registry({"version": 1, "pairs": {
+            "team-a": {"thor": THOR_ID, "captain": CAPTAIN_ID},
+            "team-b": {"thor": THOR_B_ID, "captain": CAPTAIN_B_ID}}})
 
     def assertDecision(self, proc: subprocess.CompletedProcess, code: int) -> None:
         self.assertEqual(proc.returncode, code, f"stderr:\n{proc.stderr}")
@@ -87,62 +99,92 @@ class GuardFixture(unittest.TestCase):
             self.assertIn("SendMessage denied", proc.stderr)
 
 
-class GuardDecisionTests(GuardFixture):
-    def test_main_is_allowed(self) -> None:
-        self.register_pair()
-        self.assertDecision(self.hook(payload("main")), ALLOW)
+class MainSessionTests(GuardFixture):
+    """No agent_id: the orchestrator itself, never restricted."""
 
-    def test_registered_pair_ids_are_allowed(self) -> None:
-        self.register_pair()
-        for agent_id in (THOR_ID, CAPTAIN_ID):
-            with self.subTest(to=agent_id):
-                self.assertDecision(self.hook(payload(agent_id)), ALLOW)
+    def test_main_session_may_message_any_target(self) -> None:
+        self.register_pairs()
+        for target in ("worker", "worker [3fa9c1]", "a0000000-unpaired", THOR_ID, "main"):
+            with self.subTest(to=target):
+                self.assertDecision(self.hook(payload(target)), ALLOW)
 
-    def test_unregistered_id_is_denied(self) -> None:
-        self.register_pair()
-        proc = self.hook(payload("a0000000-other"))
-        self.assertDecision(proc, DENY)
-        self.assertIn("not a paired agentId", proc.stderr)
+    def test_main_session_without_a_registry(self) -> None:
+        self.assertDecision(self.hook(payload("a0000000-unpaired")), ALLOW)
+        self.assertDecision(self.hook(payload("worker"), env=self.env(None)), ALLOW)
+
+    def test_agent_type_without_agent_id_is_main(self) -> None:
+        """A `claude --agent <name>` session sets agent_type but is the main thread."""
+        self.register_pairs()
+        proc = self.hook(payload("a0000000-unpaired", agent_type="avengers-dev:thor"))
+        self.assertDecision(proc, ALLOW)
+
+    def test_other_tools_pass_through(self) -> None:
+        self.assertDecision(self.hook(payload("anything", sender=THOR_ID, tool="Bash")), ALLOW)
+
+
+class SubagentTests(GuardFixture):
+    def test_registered_agent_may_message_main_and_own_partner(self) -> None:
+        self.register_pairs()
+        for sender, target in ((THOR_ID, "main"), (THOR_ID, CAPTAIN_ID),
+                               (CAPTAIN_ID, THOR_ID), (CAPTAIN_B_ID, THOR_B_ID)):
+            with self.subTest(sender=sender, to=target):
+                self.assertDecision(self.hook(payload(target, sender=sender)), ALLOW)
+
+    def test_registered_agent_may_not_message_another_team(self) -> None:
+        self.register_pairs()
+        for sender, target in ((THOR_ID, CAPTAIN_B_ID), (THOR_ID, THOR_B_ID),
+                               (CAPTAIN_B_ID, CAPTAIN_ID), (THOR_ID, THOR_ID)):
+            with self.subTest(sender=sender, to=target):
+                proc = self.hook(payload(target, sender=sender))
+                self.assertDecision(proc, DENY)
+                self.assertIn("not the sender's registered partner", proc.stderr)
+
+    def test_unregistered_subagent_may_message_only_main(self) -> None:
+        self.register_pairs()
+        self.assertDecision(self.hook(payload("main", sender=LONE_ID)), ALLOW)
+        for target in (THOR_ID, CAPTAIN_ID, "worker"):
+            with self.subTest(to=target):
+                proc = self.hook(payload(target, sender=LONE_ID))
+                self.assertDecision(proc, DENY)
+                self.assertIn("no registered partner", proc.stderr)
+
+    def test_partner_not_yet_registered(self) -> None:
+        """While only the Captain is registered, it may message only `main`."""
+        self.write_registry({"version": 1, "pairs": {"team-a": {"captain": CAPTAIN_ID}}})
+        self.assertDecision(self.hook(payload("main", sender=CAPTAIN_ID)), ALLOW)
+        self.assertDecision(self.hook(payload(THOR_ID, sender=CAPTAIN_ID)), DENY)
 
     def test_session_and_agent_names_are_denied(self) -> None:
-        self.register_pair()
+        self.register_pairs()
         for name in ("worker", "researcher", "captain", "thor", "ironman", "Main"):
             with self.subTest(to=name):
-                self.assertDecision(self.hook(payload(name)), DENY)
+                self.assertDecision(self.hook(payload(name, sender=THOR_ID)), DENY)
 
-    def test_name_with_ref_is_denied(self) -> None:
-        """`name [ref]` addresses another session, even when the name part is a
-        registered id."""
-        self.register_pair()
-        for target in ("worker [3fa9c1]", f"{THOR_ID} [3fa9c1]", f"{THOR_ID}[x]",
-                       "two words", f" {THOR_ID}", f"{THOR_ID}\n", "main [3fa9c1]"):
+    def test_name_with_ref_is_denied_first(self) -> None:
+        """`name [ref]` addresses another session, even when the name part is the
+        sender's own partner or `main`."""
+        self.register_pairs()
+        for target in ("worker [3fa9c1]", f"{CAPTAIN_ID} [3fa9c1]", f"{CAPTAIN_ID}[x]",
+                       "two words", f" {CAPTAIN_ID}", f"{CAPTAIN_ID}\n", "main [3fa9c1]"):
             with self.subTest(to=target):
-                proc = self.hook(payload(target))
+                proc = self.hook(payload(target, sender=THOR_ID))
                 self.assertDecision(proc, DENY)
                 self.assertIn("whitespace or `[`", proc.stderr)
 
     def test_bad_targets_are_denied(self) -> None:
-        self.register_pair()
-        for target in ("", None, 42, [THOR_ID], {"id": THOR_ID}):
+        self.register_pairs()
+        for target in ("", None, 42, [CAPTAIN_ID], {"id": CAPTAIN_ID}):
             with self.subTest(to=target):
-                self.assertDecision(self.hook(payload(target)), DENY)
-
-    def test_unparsable_payload_is_denied(self) -> None:
-        self.register_pair()
-        for stdin in ("", "not json", "[]", json.dumps({"tool_name": "SendMessage"})):
-            with self.subTest(stdin=stdin):
-                self.assertDecision(self.hook(stdin), DENY)
-
-    def test_other_tools_pass_through(self) -> None:
-        self.assertDecision(self.hook(payload("anything", tool="Bash")), ALLOW)
+                self.assertDecision(self.hook(payload(target, sender=THOR_ID)), DENY)
 
 
 class GuardFailClosedTests(GuardFixture):
-    def assertOnlyMain(self, env: dict[str, str] | None = None) -> None:
-        self.assertDecision(self.hook(payload("main"), env=env), ALLOW)
-        for target in (THOR_ID, CAPTAIN_ID, "worker"):
+    def assertOnlyMain(self, sender: object = THOR_ID,
+                       env: dict[str, str] | None = None) -> None:
+        self.assertDecision(self.hook(payload("main", sender=sender), env=env), ALLOW)
+        for target in (CAPTAIN_ID, THOR_B_ID, "worker"):
             with self.subTest(to=target):
-                self.assertDecision(self.hook(payload(target), env=env), DENY)
+                self.assertDecision(self.hook(payload(target, sender=sender), env=env), DENY)
 
     def test_no_registry_allows_only_main(self) -> None:
         self.assertFalse(self.registry.exists())
@@ -151,12 +193,16 @@ class GuardFailClosedTests(GuardFixture):
     def test_malformed_registry_allows_only_main(self) -> None:
         cases = {
             "not json": "{",
-            "wrong version": {"version": 2, "pairs": {"t": {"thor": THOR_ID}}},
-            "pairs not an object": {"version": 1, "pairs": [THOR_ID]},
-            "extra role": {"version": 1, "pairs": {"t": {"thor": THOR_ID, "hulk": "a1"}}},
-            "id with a space": {"version": 1,
-                                "pairs": {"t": {"thor": THOR_ID, "captain": "x [ref]"}}},
-            "bad team name": {"version": 1, "pairs": {"a team": {"thor": THOR_ID}}},
+            "wrong version": {"version": 2, "pairs": {"t": {"thor": THOR_ID,
+                                                            "captain": CAPTAIN_ID}}},
+            "pairs not an object": {"version": 1, "pairs": [THOR_ID, CAPTAIN_ID]},
+            "extra role": {"version": 1, "pairs": {"t": {"thor": THOR_ID,
+                                                         "captain": CAPTAIN_ID, "hulk": "a1"}}},
+            "id with a space": {"version": 1, "pairs": {
+                "t": {"thor": THOR_ID, "captain": CAPTAIN_ID},
+                "u": {"thor": "x [ref]"}}},
+            "bad team name": {"version": 1, "pairs": {"a team": {"thor": THOR_ID,
+                                                                 "captain": CAPTAIN_ID}}},
             "top level list": [THOR_ID, CAPTAIN_ID],
         }
         for name, data in cases.items():
@@ -165,7 +211,7 @@ class GuardFailClosedTests(GuardFixture):
                 self.assertOnlyMain()
 
     def test_unreadable_registry_allows_only_main(self) -> None:
-        self.register_pair()
+        self.register_pairs()
         self.registry.chmod(0)
         self.addCleanup(self.registry.chmod, 0o600)
         if os.access(self.registry, os.R_OK):
@@ -177,23 +223,60 @@ class GuardFailClosedTests(GuardFixture):
         self.assertOnlyMain()
 
     def test_no_project_dir_allows_only_main(self) -> None:
-        self.register_pair()
+        self.register_pairs()
         self.assertOnlyMain(env=self.env(None))
+
+    def test_malformed_payload_with_agent_id_allows_only_main(self) -> None:
+        self.register_pairs()
+        for sender in ("", None, 7, "x [ref]", ["a"]):
+            with self.subTest(sender=sender):
+                self.assertOnlyMain(sender=sender)
+        # A subagent payload without a usable tool_input has no target: denied.
+        for tool_input in (None, "main", [], {}):
+            with self.subTest(tool_input=tool_input):
+                stdin = json.dumps({"tool_name": "SendMessage", "agent_id": THOR_ID,
+                                    "tool_input": tool_input})
+                self.assertDecision(self.hook(stdin), DENY)
+
+    def test_unparsable_payload_is_denied(self) -> None:
+        """Not a JSON object: the sender cannot be shown to be the main session."""
+        self.register_pairs()
+        for stdin in ("", "not json", "[]", '"main"'):
+            with self.subTest(stdin=stdin):
+                self.assertDecision(self.hook(stdin), DENY)
 
     def test_guard_that_cannot_run_denies(self) -> None:
         """A crash or a missing interpreter is exit 2, never a non-blocking error."""
-        self.register_pair()
+        self.register_pairs()
         fake_bin = self.tmp / "bin"
         fake_bin.mkdir()
         broken = fake_bin / "python3"
         broken.write_text("#!/bin/sh\nexit 1\n")
         broken.chmod(0o755)
         env = self.env(self.project, PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}")
-        for target in ("main", THOR_ID):
-            with self.subTest(to=target):
-                proc = self.hook(payload(target), env=env)
+        for stdin in (payload("main", sender=THOR_ID), payload(CAPTAIN_ID, sender=THOR_ID)):
+            with self.subTest(stdin=stdin):
+                proc = self.hook(stdin, env=env)
                 self.assertDecision(proc, DENY)
                 self.assertIn("fails closed", proc.stderr)
+
+
+class GuardDebugLogTests(GuardFixture):
+    def test_log_records_keys_not_values(self) -> None:
+        log = self.tmp / "guard.log"
+        env = self.env(self.project, AVENGERS_PAIR_GUARD_LOG=str(log))
+        self.hook(payload("main", agent_type="avengers-dev:thor"), env=env)
+        self.hook(payload("main", sender=THOR_ID), env=env)
+        lines = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual([line["has_agent_id"] for line in lines], [False, True])
+        self.assertEqual(lines[0]["agent_type"], "avengers-dev:thor")
+        self.assertIn("tool_input", lines[0]["keys"])
+        self.assertNotIn(THOR_ID, log.read_text())
+        self.assertNotIn("round 1 review request", log.read_text())
+
+    def test_unwritable_log_does_not_change_the_decision(self) -> None:
+        env = self.env(self.project, AVENGERS_PAIR_GUARD_LOG=str(self.tmp / "no" / "x.log"))
+        self.assertDecision(self.hook(payload("main", sender=THOR_ID), env=env), ALLOW)
 
 
 class RegistryCommandTests(GuardFixture):
@@ -201,20 +284,20 @@ class RegistryCommandTests(GuardFixture):
         """Captain first, then its Thor: each id is allowed once registered."""
         proc = self.registry_cmd("register", "--team", "team-a", "--captain", CAPTAIN_ID)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertDecision(self.hook(payload(CAPTAIN_ID)), ALLOW)
-        self.assertDecision(self.hook(payload(THOR_ID)), DENY)
+        self.assertDecision(self.hook(payload(CAPTAIN_ID, sender=THOR_ID)), DENY)
         proc = self.registry_cmd("register", "--team", "team-a", "--thor", THOR_ID)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["pairs"],
                          {"team-a": {"thor": THOR_ID, "captain": CAPTAIN_ID}})
-        self.assertDecision(self.hook(payload(THOR_ID)), ALLOW)
+        self.assertDecision(self.hook(payload(CAPTAIN_ID, sender=THOR_ID)), ALLOW)
+        self.assertDecision(self.hook(payload(THOR_ID, sender=CAPTAIN_ID)), ALLOW)
 
     def test_unregister_revokes(self) -> None:
-        self.register_pair()
+        self.register_pairs()
         proc = self.registry_cmd("unregister", "--team", "team-a")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout)["pairs"], {})
-        self.assertDecision(self.hook(payload(THOR_ID)), DENY)
+        self.assertEqual(list(json.loads(proc.stdout)["pairs"]), ["team-b"])
+        self.assertDecision(self.hook(payload(CAPTAIN_ID, sender=THOR_ID)), DENY)
         # Unregistering an absent team is a no-op, not an error.
         self.assertEqual(self.registry_cmd("unregister", "--team", "gone").returncode, 0)
 
@@ -227,8 +310,8 @@ class RegistryCommandTests(GuardFixture):
         self.assertFalse(self.registry.exists())
 
     def test_an_id_belongs_to_one_team(self) -> None:
-        self.register_pair()
-        proc = self.registry_cmd("register", "--team", "team-b", "--thor", THOR_ID)
+        self.register_pairs()
+        proc = self.registry_cmd("register", "--team", "team-c", "--thor", THOR_ID)
         self.assertEqual(proc.returncode, 1)
         self.assertIn("already registered to team team-a", proc.stderr)
 

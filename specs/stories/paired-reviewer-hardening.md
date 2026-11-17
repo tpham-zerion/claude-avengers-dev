@@ -24,17 +24,24 @@ Quality Gate and Closure Loop with the paired loop.
 - `README.md`, `TESTING.md`, `.github/workflows/tests.yml` — hook docs, test docs, byte-compile `scripts`
 
 ## Design & Structure
-- **Guard.** `sendmessage-guard.sh` runs `pair-registry.py guard`, which reads the hook payload on stdin. Allowed: `to` exactly `main`, or an agentId in a valid registry under `CLAUDE_PROJECT_DIR`. Denied, exit 2 with the reason on stderr: everything else, including other sessions, names, `name [ref]` targets, unregistered ids, and any target with whitespace or `[`.
-- **Fail closed.** A missing, unreadable or malformed registry, or an unset `CLAUDE_PROJECT_DIR`, leaves only `main`. An unparsable payload is denied. Claude Code treats any exit other than 0 and 2 as non-blocking, so the shell entry maps a crash or a missing `python3` to exit 2.
+- **Guard.** `sendmessage-guard.sh` runs `pair-registry.py guard`, which reads the hook payload on stdin. It restricts subagents only, keyed on the documented `agent_id` field of the PreToolUse input (`agent_type` alone is not used: `claude --agent <name>` sets it on a main session).
+  - No `agent_id`: a main-session call; allowed, any target, so the orchestrator is never cut off.
+  - `agent_id` present: a target with whitespace or `[` is denied first. A sender registered in a pair may message `main` and its own partner's agentId; any other subagent only `main`. Another team's agents are denied. Denials exit 2 with the reason on stderr.
+- **Fail closed (subagents).** A missing, unreadable or malformed registry, an unset `CLAUDE_PROJECT_DIR`, or a malformed `agent_id` leaves only `main`. A payload that is not a JSON object cannot be attributed to the main session and is denied. Claude Code treats any exit other than 0 and 2 as non-blocking, so the shell entry maps a crash or a missing `python3` to exit 2 (main session included).
+- **Debug.** `AVENGERS_PAIR_GUARD_LOG=<file>` appends one JSON line per guarded call with the payload's keys only (plus `agent_type`).
 - **Registry.** `{"version": 1, "pairs": {"<team>": {"thor": "<id>", "captain": "<id>"}}}`, written atomically. An agentId belongs to one team. IronMan registers each id as it gets it and unregisters the team when the loop ends.
 
 ## Mechanism and open item
 - **Relied on:** resume-by-message. Each side ends its run after sending, and the partner's message resumes it. This supersedes, for paired builder teams only, the "no SendMessage path" note in `agent-escalation-path.md`.
 - **Open item:** verify resume-by-message end to end (a finished subagent resumed by a `SendMessage` from its partner, and from `main`) on the Claude Code versions the plugin supports.
+- **Open item:** confirm empirically, once, with `AVENGERS_PAIR_GUARD_LOG`, that main-session SendMessage calls carry no `agent_id` and that subagent calls carry it. The hooks docs state the latter; the former is implied, not stated.
+- **Open item:** the registry is writable by agents with Write or Bash, so the guard stops misdirected or injected targets, not a deliberately hostile agent.
 - **Fallback:** if a Captain run ends with no verdict copy to `main` for the round, or a partner never resumes, IronMan unregisters the pair and runs the review loop by re-dispatch, as for an unpaired team.
 
 ## Acceptance Criteria
-- [ ] The hook allows `main` and registered pair ids, and denies an unregistered id, a session name and `name [ref]`; with no registry only `main` is allowed; a guard that cannot run denies
+- [ ] A main-session call (no `agent_id`, including an `agent_type`-only `--agent` session) is allowed to any target
+- [ ] A registered subagent may message `main` and its own partner, not another team's agents; an unregistered subagent only `main`; a session name and `name [ref]` are denied
+- [ ] For subagents, no registry or a malformed payload carrying `agent_id` leaves only `main`; a guard that cannot run denies
 - [ ] Paired sections are allowed only in the three protocol files and not inside code fences
 - [ ] A messaging verb in a paired section must be followed by an allowed recipient
 - [ ] Every agent has a frontmatter `tools:` line; the `tools:` skip applies to frontmatter only
