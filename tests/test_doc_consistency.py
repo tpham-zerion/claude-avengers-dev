@@ -3,8 +3,9 @@
 Several facts are written down in more than one place: the /bmad and /sdd phase
 maps, the equipment names, the skill list, the relay-config section numbers, the
 plugin version and the agents' shared design standard. These tests keep the copies
-in agreement, and keep the instruction docs free of mid-run agent messaging, a
-channel subagents do not have.
+in agreement, and confine mid-run agent messaging to the paired-reviewer protocol:
+only Thor and Captain hold `SendMessage`, and only the paired-reviewer sections may
+describe messaging, between the pair and IronMan.
 
 Every checker is a pure function over text: it takes the file contents plus a path
 label and returns a list of problems, each "path:line: what is wrong, what was
@@ -540,16 +541,36 @@ def check_shared_paragraph(texts: dict[str, str], lead: str) -> list[str]:
 
 # -- agent messaging ------------------------------------------------------------------------------
 
-# Subagents have no tool to message IronMan or each other mid-run; a question comes
-# back in a Blocked or Stuck report and IronMan re-dispatches. Any instruction to
-# message, ask, ping or contact a named agent describes a channel that does not exist.
+# Mid-run messaging exists only inside a paired builder team: a Thor and its own
+# Captain message each other and IronMan (`main`) with `SendMessage`. Everywhere
+# else a question comes back in a Blocked or Stuck report and IronMan re-dispatches.
+# So an instruction to message, ask, ping or contact a named agent, or a mention of
+# SendMessage, is allowed only inside a paired-reviewer section, and even there it
+# may not name an agent outside the pair. No instruction anywhere tells agents to
+# delegate work to each other.
 AGENT_MESSAGING = re.compile(
-    r"\b(message|messages|ask|asks|ping|contact)\s+"
-    r"(ironman|tony|blackwidow|black widow|thor|captain|hulk|vision)\b"
-    r"|communicate directly", re.IGNORECASE)
+    r"\b(?:send ?messages?|message[sd]?|messaging|ask|asks|ping|contact)\s+"
+    r"(?:to\s+)?(?:(?:its|their|the|a|your)\s+)?(?:paired\s+)?"
+    r"(?P<who>ironman|tony|blackwidow|black widow|thor|captain|hulk|vision)\b"
+    r"|\bSendMessages?\b|communicate directly", re.IGNORECASE)
+# Recipients a paired-reviewer section may name: the pair itself and IronMan.
+PAIRED_RECIPIENTS = {"thor", "captain", "ironman", "tony"}
+# Section titles that hold the paired-reviewer protocol (the rule and each agent's copy).
+PAIRED_SECTION_TITLES = {"Paired Reviewers", "When Paired"}
+HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*$", re.MULTILINE)
+# Agents told to hand work to each other. A negated sentence ("never for
+# delegating work to each other") states the bound, so it is not an instruction.
+AGENT_DELEGATION = re.compile(
+    r"\b(?:delegat\w*|hand\w*\s+(?:off|over)|assign\w*)\b[^.\n]*?"
+    r"\b(?:each other|one another|the other agent|(?:its|your)\s+(?:paired\s+)?(?:thor|captain))\b",
+    re.IGNORECASE)
+NEGATION = re.compile(r"\b(?:never|not|no|don't|doesn't)\b", re.IGNORECASE)
+# The frontmatter tool list names SendMessage; agent_tools() checks who holds it.
+TOOLS_LINE = re.compile(r"^tools:", re.MULTILINE)
 MESSAGING_SCOPE_DIRS = ("agents/", "personas/", "equipment/", "skills/", "references/",
                         ".claude/rules/")
 MESSAGING_SCOPE_FILES = ("CLAUDE.md", "README.md")
+SENDMESSAGE_HOLDERS = {"thor", "captain"}
 
 
 def in_messaging_scope(rel: str) -> bool:
@@ -557,11 +578,56 @@ def in_messaging_scope(rel: str) -> bool:
     return rel.startswith(MESSAGING_SCOPE_DIRS) or rel in MESSAGING_SCOPE_FILES
 
 
+def paired_spans(text: str) -> list[tuple[int, int]]:
+    """Offsets of each paired-reviewer section, up to the next heading of its level or higher."""
+    headings = [(m.start(), len(m.group(1)), m.group(2)) for m in HEADING.finditer(text)]
+    spans = []
+    for i, (pos, level, title) in enumerate(headings):
+        if title not in PAIRED_SECTION_TITLES:
+            continue
+        end = next((p for p, lvl, _ in headings[i + 1:] if lvl <= level), len(text))
+        spans.append((pos, end))
+    return spans
+
+
+def sentence_at(text: str, start: int, end: int) -> str:
+    """The sentence around text[start:end], bounded by '.' or a blank line."""
+    left = max(text.rfind(".", 0, start), text.rfind("\n\n", 0, start))
+    right = min((i for i in (text.find(".", end), text.find("\n\n", end)) if i != -1),
+                default=len(text))
+    return text[left + 1:right]
+
+
 def check_no_agent_messaging(text: str, label: str) -> list[str]:
-    """No instruction tells an agent to message another agent mid-run."""
-    return [f"{label}:{line_of(text, m.start())}: '{m.group(0)}' describes mid-run agent "
-            f"messaging; agents return a Blocked or Stuck report and IronMan re-dispatches"
-            for m in AGENT_MESSAGING.finditer(text)]
+    """Agent messaging only inside a paired-reviewer section, only within the pair and
+    IronMan, and never an instruction for agents to delegate work to each other."""
+    spans = paired_spans(text)
+    problems = []
+    for m in AGENT_MESSAGING.finditer(text):
+        line_start = text.rfind("\n", 0, m.start()) + 1
+        if TOOLS_LINE.match(text, line_start):
+            continue
+        where = f"{label}:{line_of(text, m.start())}: '{m.group(0)}'"
+        who = (m.group("who") or "").lower()
+        if not any(s <= m.start() < e for s, e in spans):
+            problems.append(f"{where} describes mid-run agent messaging outside a "
+                            f"paired-reviewer section; agents return a Blocked or Stuck "
+                            f"report and IronMan re-dispatches")
+        elif who and who not in PAIRED_RECIPIENTS:
+            problems.append(f"{where} messages an agent outside the pair; a paired Thor "
+                            f"and Captain message only each other and IronMan")
+    for m in AGENT_DELEGATION.finditer(text):
+        if not NEGATION.search(sentence_at(text, m.start(), m.end())):
+            problems.append(f"{label}:{line_of(text, m.start())}: '{m.group(0)}' tells "
+                            f"agents to delegate work to each other; messages carry review "
+                            f"requests, findings and escalations only")
+    return problems
+
+
+def agent_tools(text: str) -> list[str]:
+    """The comma-separated `tools:` list from an agent's frontmatter."""
+    m = re.search(r"^tools:[ \t]*(.*)$", text, re.MULTILINE)
+    return [tool.strip() for tool in m.group(1).split(",") if tool.strip()] if m else []
 
 
 # -- real-file tests ----------------------------------------------------------------------------
@@ -597,6 +663,13 @@ DESIGN_STANDARD_COPIES = ["agents/captain.md", "agents/hulk.md", "agents/thor.md
 DESIGN_STANDARD_LEAD = "**Design standard.**"
 FLEET_RULE_FILE = ".claude/rules/ironman-delegation.md"
 FLEET_RULE = "Keep the Fleet Busy"
+PAIRED_RULE = "Paired Reviewers"
+PAIRED_RULE_LEADS = ["**Pairing at dispatch.**", "**Thor requests review.**",
+                     "**Captain returns findings.**", "**The loop.**",
+                     "**Ship gate unchanged.**", "**Escalate, don't decide.**",
+                     "**Bounds.**", "**Independence.**", "**Without a pair.**"]
+SHIP_GATE_SENTENCE = "IronMan never merges on a Captain PASS alone."
+PAIRED_AGENT_DOCS = ["agents/thor.md", "agents/captain.md"]
 FLEET_RULE_LEADS = ["**Same turn as each event.**", "**Gate the resource, not the team.**",
                     "**Same message as the hold.**", "**Static reviews run in parallel.**",
                     "**Check before ending a turn.**", "**Stop only for these reasons:**",
@@ -751,9 +824,33 @@ class SharedRuleTests(DocConsistencyCase):
             self.assertIn(lead, section, f"{FLEET_RULE_FILE}: {FLEET_RULE} lost '{lead}'")
         self.assertIn(f"`{FLEET_RULE_FILE}` ({FLEET_RULE})", read("personas/ironman.md"))
 
+    def test_paired_reviewer_protocol_is_wired(self) -> None:
+        """The protocol section exists with each part and the ship-gate sentence; both
+        paired agents carry a When Paired section; the persona points to the rule."""
+        rule = read(FLEET_RULE_FILE)
+        self.assertIn(f"## {PAIRED_RULE}", rule)
+        section = rule.split(f"## {PAIRED_RULE}", 1)[1].split("\n## ", 1)[0]
+        for lead in PAIRED_RULE_LEADS:
+            self.assertIn(lead, section, f"{FLEET_RULE_FILE}: {PAIRED_RULE} lost '{lead}'")
+        self.assertIn(SHIP_GATE_SENTENCE, " ".join(section.split()))
+        for rel in PAIRED_AGENT_DOCS:
+            with self.subTest(file=rel):
+                text = read(rel)
+                self.assertIn("## When Paired", text)
+                self.assertIn(f"`{FLEET_RULE_FILE}` ({PAIRED_RULE})", " ".join(text.split()))
+        self.assertIn(f"`{FLEET_RULE_FILE}` ({PAIRED_RULE})", read("personas/ironman.md"))
+
+    def test_only_thor_and_captain_hold_sendmessage(self) -> None:
+        """SendMessage is in the tools of thor and captain and of no other agent."""
+        holders = {rel.removeprefix("agents/").removesuffix(".md")
+                   for rel in tracked_markdown() if rel.startswith("agents/")
+                   and "SendMessage" in agent_tools(read(rel))}
+        self.assertEqual(holders, SENDMESSAGE_HOLDERS)
+
     def test_no_mid_run_agent_messaging(self) -> None:
-        """No agent, persona, skill, equipment, reference or rule doc tells an agent to
-        message another agent mid-run."""
+        """No agent, persona, skill, equipment, reference or rule doc describes mid-run
+        messaging outside the paired-reviewer protocol, or agents delegating work to
+        each other."""
         scanned = [rel for rel in tracked_markdown() if in_messaging_scope(rel)]
         self.assertIn("agents/thor.md", scanned)
         problems: list[str] = []
@@ -957,6 +1054,46 @@ class MutationTests(unittest.TestCase):
                      "Trust Thor and BlackWidow to communicate directly"):
             with self.subTest(line=line):
                 self.assertEqual(len(check_no_agent_messaging(line, "t.md")), 1)
+
+    def test_paired_messaging_allowed_only_in_pair(self) -> None:
+        paired = ("# Thor\n\n## When Paired\n\nSendMessage your paired Captain the range.\n"
+                  "Then message IronMan (`main`) to escalate. Messages are never for "
+                  "delegating work to each other.\n\n## Next\n\nReturn a report.\n")
+        self.assertEqual(check_no_agent_messaging(paired, "t.md"), [])
+        self.assertEqual(check_no_agent_messaging("---\ntools: Read, SendMessage\n---\n",
+                                                  "t.md"), [])
+        # The same instruction outside the section is mid-run messaging.
+        problems = check_no_agent_messaging(paired + "\nSendMessage your paired Captain.\n",
+                                            "t.md")
+        self.assertEqual(len(problems), 1, problems)
+        self.assertTrue(problems[0].startswith("t.md:12: 'SendMessage your paired Captain'"), problems)
+        # A paired section that reaches past the pair.
+        for line in ("Message BlackWidow for the research.", "Then ask Hulk to re-plan.",
+                     "SendMessage to the Vision conductor.", "Ping Black Widow."):
+            with self.subTest(line=line):
+                drifted = paired.replace("Then message IronMan", line + " Then message IronMan")
+                problems = check_no_agent_messaging(drifted, "t.md")
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("outside the pair", problems[0])
+        # A nested heading stays inside the section; a sibling heading ends it.
+        nested = paired.replace("## Next", "### Detail\n\nMessage the Captain.\n\n## Next")
+        self.assertEqual(check_no_agent_messaging(nested, "t.md"), [])
+
+    def test_agent_delegation_drift(self) -> None:
+        for line in ("Thor delegates the refactor to its paired Captain.",
+                     "The pair may hand off work to each other.",
+                     "Captain assigns the fix to the other agent."):
+            with self.subTest(line=line):
+                problems = check_no_agent_messaging(line, "t.md")
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("delegate work to each other", problems[0])
+        self.assertEqual(check_no_agent_messaging(
+            "Messages are never for delegating work to each other.", "t.md"), [])
+
+    def test_agent_tools_parse(self) -> None:
+        self.assertEqual(agent_tools("---\nname: x\ntools: Read, Bash , SendMessage\n---\n"),
+                         ["Read", "Bash", "SendMessage"])
+        self.assertEqual(agent_tools("---\nname: x\n---\n"), [])
 
     def test_messaging_scope(self) -> None:
         self.assertTrue(in_messaging_scope("agents/thor.md"))

@@ -87,9 +87,57 @@ The main-loop write list is canonical in `references/bmad/relay-config.md` §3.1
 | Handle agent failure | retry <=2x with amended instructions, then escalate |
 | Agent returns a question (Blocked report, or Stuck report with a question) | answer it, dispatch BlackWidow, or ask the user; re-dispatch with answer + Work state + Resume instruction |
 
-Agents cannot message each other mid-run, so a returned question is the only
-escalation path. A Stuck report without a question is a failure and uses the
-"Handle agent failure" row.
+Outside a paired builder team (Paired Reviewers below), agents have no mid-run
+channel, so a returned question is the only escalation path. A Stuck report
+without a question is a failure and uses the "Handle agent failure" row.
+
+## Paired Reviewers
+
+A builder team is one Thor and its own Captain. The pair runs the
+build-review-fix loop directly with `SendMessage`, so a review round does not
+relay through IronMan. Only `agents/thor.md` and `agents/captain.md` list
+`SendMessage` in `tools:`; no other agent has it.
+
+1. **Pairing at dispatch.** IronMan starts the team's Thor and its Captain, then
+   gives each the other's agentId in its brief. When the Captain starts before
+   its Thor exists, IronMan sends the Thor's agentId to the Captain in a
+   follow-up message. A Captain with nothing to review yet ends its run with a
+   ready note; the first review request resumes it.
+2. **Thor requests review.** Thor commits, then SendMessages its paired Captain
+   a review request carrying: the worktree, the branch, HEAD, the base, the
+   commit range, what changed, and what has and has not been run (tests, gates,
+   linters).
+3. **Captain returns findings.** Captain reviews read-only, as in any review.
+   It SendMessages its findings (each `[CRITICAL]` and `[WARNING]` with
+   file:line) and its verdict straight back to its Thor. It also SendMessages
+   IronMan (`main`) a one-line copy of every verdict: round number, verdict and
+   counts, for example `round 2: CONDITIONAL PASS, 0 critical, 1 warning`.
+4. **The loop.** Thor fixes, commits, and re-requests review with the new
+   range. This repeats until Captain returns PASS. Each side ends its run after
+   sending; the other's message resumes it. The Quality Gate cap still holds:
+   after three rounds without PASS, Captain escalates instead of starting a
+   fourth.
+5. **Ship gate unchanged.** Only a PASS goes on to IronMan: Thor SendMessages
+   IronMan (`main`) its completion report with Captain's verdict and the
+   reviewed range. IronMan then runs the final ship gate itself: verify git,
+   verify that the tests and gates actually ran, run the pre-push scans, then
+   push, open the PR and merge. IronMan never merges on a Captain PASS alone. A
+   PASS whose tests were not run is reported as "PASS, tests unverified".
+6. **Escalate, don't decide.** Either agent SendMessages IronMan (`main`)
+   instead of deciding when it hits: a decision that belongs to the operator,
+   a disagreement still open after two rounds on the same finding, a need for
+   a shared resource (Docker, a test stack slot), or anything outside its
+   brief. IronMan answers by message or by re-dispatch.
+7. **Bounds.** Messages carry review requests, findings and escalations only,
+   never for delegating work to each other. Thor still never spawns agents, and
+   Captain stays read-only. Neither one messages any agent other than its pair
+   and IronMan.
+8. **Independence.** Captain does not take its Thor's word that tests passed:
+   its findings say what it verified itself and what it only read. Thor does
+   not argue a finding away: it fixes it or escalates it.
+9. **Without a pair.** If the paired agentId is unknown, either agent returns
+   its report as before, and IronMan runs the review loop by re-dispatch.
+   Single-agent dispatch works unchanged.
 
 ## Conflict Resolution Authority
 
