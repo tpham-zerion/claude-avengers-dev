@@ -595,6 +595,12 @@ SDD_TABLES = ["skills/sdd/SKILL.md", "references/sdd/relay-config.md", "agents/v
 LIST_COPIES = ["CLAUDE.md", "personas/ironman.md"]
 DESIGN_STANDARD_COPIES = ["agents/captain.md", "agents/hulk.md", "agents/thor.md"]
 DESIGN_STANDARD_LEAD = "**Design standard.**"
+FLEET_RULE_FILE = ".claude/rules/ironman-delegation.md"
+FLEET_RULE = "Keep the Fleet Busy"
+FLEET_RULE_LEADS = ["**Same turn as each event.**", "**Gate the resource, not the team.**",
+                    "**Same message as the hold.**", "**Static reviews run in parallel.**",
+                    "**Check before ending a turn.**", "**Stop only for these reasons:**",
+                    "**Report idle teams, never hide them.**"]
 
 
 class DocConsistencyCase(unittest.TestCase):
@@ -735,6 +741,15 @@ class SharedRuleTests(DocConsistencyCase):
         """Captain, Hulk and Thor carry one byte-identical design standard paragraph."""
         texts = {rel: read(rel) for rel in DESIGN_STANDARD_COPIES}
         self.assertNoProblems(check_shared_paragraph(texts, DESIGN_STANDARD_LEAD))
+
+    def test_keep_the_fleet_busy_rule_is_wired(self) -> None:
+        """The idle-team rule exists with each of its parts, and the persona points to it."""
+        rule = read(FLEET_RULE_FILE)
+        self.assertIn(f"## {FLEET_RULE}", rule)
+        section = rule.split(f"## {FLEET_RULE}", 1)[1].split("\n## ", 1)[0]
+        for lead in FLEET_RULE_LEADS:
+            self.assertIn(lead, section, f"{FLEET_RULE_FILE}: {FLEET_RULE} lost '{lead}'")
+        self.assertIn(f"`{FLEET_RULE_FILE}` ({FLEET_RULE})", read("personas/ironman.md"))
 
     def test_no_mid_run_agent_messaging(self) -> None:
         """No agent, persona, skill, equipment, reference or rule doc tells an agent to
