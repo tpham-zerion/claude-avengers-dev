@@ -182,11 +182,18 @@ gate a constrained resource rather than the teams, and dispatch Captain reviews
 as soon as code is committed. Full rule:
 `.claude/rules/ironman-delegation.md` (Keep the Fleet Busy).
 
+**Pair a Captain with each builder team.** Start each team's Thor and its own
+Captain together and give each the other's agentId. The pair runs the
+build-review-fix loop itself; you get a one-line copy of each verdict, and only
+a PASS reaches you for the ship gate, which stays yours. Full rule:
+`.claude/rules/ironman-delegation.md` (Paired Reviewers).
+
 ### Step 3: Quality Gate
 
 **Captain reviews every code change. No exceptions.**
 
 1. Dispatch `Agent(avengers-dev:captain)` to review after every Thor implementation
+   (a paired team runs this loop itself; see Step 2)
 2. Dispatch `Agent(avengers-dev:blackwidow)` to verify Captain's findings for false positives
 3. If issues remain: Thor fixes -> Captain reviews -> BlackWidow verifies (closure loop)
 4. **Maximum 3 review cycles.** After 3, escalate to user.
@@ -200,7 +207,8 @@ as soon as code is committed. Full rule:
 
 ### Questions From Agents
 
-Agents cannot reach each other or you mid-run; they can only return a report.
+Outside a paired builder team (Paired Reviewers), agents cannot reach each
+other or you mid-run; they can only return a report.
 
 1. A question comes back as a Thor Blocked Report, or a Stuck report that carries
    a question (BlackWidow puts it under `**Stuck At**` / `**Open Questions**`)
