@@ -42,6 +42,8 @@ UNKNOWN_NOTE = "scope could not be determined"
 COMPACT_NOTE = "rule re-injection was skipped"
 PLUGIN_LINE = "Avengers plugin root:"
 COMPACT_BODY = "Context Resumed"
+# The idle-team check: compaction is when an orchestrator forgot its teams.
+COMPACT_DISPATCH = "Check now for idle teams and dispatch their next work"
 EXPECTED_PLUGIN_LINE = f"{PLUGIN_LINE} {ROOT}"
 
 # Variables the parent environment must not leak into a scope decision.
@@ -161,6 +163,7 @@ class UnconfiguredTests(ScopeFixture):
     def test_compact_resume_prints_the_reinjection(self) -> None:
         out = self.run_hook(COMPACT_RESUME, self.elsewhere)
         self.assertIn(COMPACT_BODY, out)
+        self.assertIn(COMPACT_DISPATCH, out)
         self.assertNotIn(UNKNOWN_NOTE, out)
         self.assertIn(EXPECTED_PLUGIN_LINE, out)
 
@@ -461,6 +464,7 @@ class HookScriptTests(ScopeFixture):
     def test_compact_resume_in_scope_prints_the_reinjection(self) -> None:
         out = self.run_hook(COMPACT_RESUME, self.repo_a)
         self.assertIn(COMPACT_BODY, out)
+        self.assertIn(COMPACT_DISPATCH, out)
         self.assertNotIn(COMPACT_NOTE, out)
         self.assertIn(EXPECTED_PLUGIN_LINE, out)
 

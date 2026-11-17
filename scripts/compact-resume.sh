@@ -51,6 +51,9 @@ Report a per-file change table — no exceptions:
 |------|-------------|---------------|
 | [path](repo/path) | +N | -N |
 
+KEEP THE FLEET BUSY — compaction is when idle teams get forgotten:
+Check now for idle teams and dispatch their next work before anything else.
+
 IronMan delegates; Avengers execute. Stay in character.]
 EOF
 fi
