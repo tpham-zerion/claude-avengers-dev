@@ -62,6 +62,13 @@ python3 -m unittest discover -s tests -v
   `scripts/compact-resume.sh` print in each scope. It points `HOME` and
   `CLAUDE_CONFIG_DIR` at a temporary directory, so your own configuration is never
   read.
+- `tests/test_sendmessage_guard.py` covers the paired-reviewer guard: it feeds
+  `scripts/sendmessage-guard.sh` a PreToolUse payload on stdin and checks that
+  `main` and registered pair ids are allowed (exit 0), that unregistered ids,
+  session names and `name [ref]` targets are denied (exit 2), that a missing,
+  unreadable or malformed registry leaves only `main`, and that a guard which
+  cannot run denies. It also covers `scripts/pair-registry.py register`,
+  `unregister` and `list`, and the hook's entry in `hooks/hooks.json`.
 - `tests/test_script_smoke.py` runs `--help` on every `skills/*/scripts/*.py` and
   `tools/*.py`, which catches import-time errors on older Pythons.
 

@@ -88,6 +88,17 @@ is not injected and the post-compaction rules are not re-injected. The
 `Avengers plugin root:` line prints in every case, because agents read it.
 Changes take effect at the next session start.
 
+**Paired-reviewer guard.** The plugin also installs a PreToolUse hook
+(`scripts/sendmessage-guard.sh`) on the agent messaging tool. A paired builder
+team (one Thor and its own Captain) may message only the main session (`main`)
+and the agentIds the orchestrator registered for the pair in the project's
+`.avengers/pairs.json` (written by `scripts/pair-registry.py`). Every other
+target is denied: other sessions, names, `name [ref]` targets and unregistered
+ids. The hook fails closed: with no readable registry only `main` is allowed, and
+if the check itself cannot run (for example `python3` is missing) the call is
+denied. Because the hook applies to the whole session, the main session's own
+cross-session messages are limited the same way while the plugin is enabled.
+
 **BMAD-METHOD dependency** — only needed for **`/avengers-dev:bmad`**. The BMAD
 conductor *wraps* the real BMAD-METHOD framework, whose skills require a
 project-level install. In the repo you want to run a BMAD sequence against:
